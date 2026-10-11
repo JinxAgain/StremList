@@ -32,10 +32,17 @@ foreach ($conn in $connections) {
     }
 }
 
+# Clean up debug.err.log if empty
+$errLog = Join-Path $PSScriptRoot "debug.err.log"
+if (Test-Path $errLog) {
+    $item = Get-Item $errLog
+    if ($item.Length -eq 0) { Remove-Item $errLog -Force -ErrorAction SilentlyContinue }
+}
+
 if ($stoppedAny) {
     Write-Host "`n[Success] StremList server has been stopped.`n" -ForegroundColor Green
 } else {
-    Write-Host "[Notice] No active StremList process was found running on port 7000.`n" -ForegroundColor Yellow
+    Write-Host "[Notice] No active StremList process was found running.`n" -ForegroundColor Yellow
 }
 
 Start-Sleep -Seconds 1

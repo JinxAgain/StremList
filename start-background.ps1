@@ -68,22 +68,35 @@ foreach ($conn in $connections) {
     }
 }
 
-# 5. Start StremList in hidden background process
-$logFile = Join-Path $PSScriptRoot "debug.log"
+# 5. Build if dist/index.js is missing
 $distFile = Join-Path $PSScriptRoot "dist\index.js"
+if (-not (Test-Path $distFile)) {
+    & npm run build
+}
+
+# 6. Start StremList in hidden background process with separate out/err logs
+$outLog = Join-Path $PSScriptRoot "debug.log"
+$errLog = Join-Path $PSScriptRoot "debug.err.log"
 $tsxCli = Join-Path $PSScriptRoot "node_modules\tsx\dist\cli.mjs"
 $entryFile = Join-Path $PSScriptRoot "src\index.ts"
 
-if (Test-Path $distFile) {
-    $proc = Start-Process -FilePath "node.exe" -ArgumentList "`"$distFile`"" -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -RedirectStandardOutput $logFile -RedirectStandardError $logFile -PassThru
+$proc = if (Test-Path $distFile) {
+    Start-Process -FilePath "node.exe" -ArgumentList "`"$distFile`"" -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -RedirectStandardOutput $outLog -RedirectStandardError $errLog -PassThru
 } else {
-    $proc = Start-Process -FilePath "node.exe" -ArgumentList "`"$tsxCli`" `"$entryFile`"" -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -RedirectStandardOutput $logFile -RedirectStandardError $logFile -PassThru
+    Start-Process -FilePath "node.exe" -ArgumentList "`"$tsxCli`"", "`"$entryFile`"" -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -RedirectStandardOutput $outLog -RedirectStandardError $errLog -PassThru
 }
+
+# 7. Wait briefly for server to bind and save PID
+Start-Sleep -Seconds 2
 
 if ($proc -and $proc.Id) {
     Set-Content -Path $pidFile -Value $proc.Id
 }
 
-# 6. Wait briefly for server to bind and launch configure page in browser
-Start-Sleep -Seconds 2
+$conn = Get-NetTCPConnection -LocalPort 7000 -ErrorAction SilentlyContinue
+if ($conn -and $conn.OwningProcess) {
+    Set-Content -Path $pidFile -Value $conn.OwningProcess
+}
+
+# 8. Launch configure page in default browser
 Start-Process "http://127.0.0.1:7000/configure"
