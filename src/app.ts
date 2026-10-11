@@ -3,7 +3,7 @@ import cors from 'cors';
 import { handleManifest } from './routes/manifest.js';
 import { handleStream } from './routes/stream.js';
 import { handlePlay } from './routes/play.js';
-import { handleConfigure } from './routes/configure.js';
+import { handleConfigure, handleOpenListLogin, handleOpenListTest } from './routes/configure.js';
 
 export function createApp(): Express {
   const app = express();
@@ -26,11 +26,13 @@ export function createApp(): Express {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
-  // Addon Configuration UI
+  // Addon Configuration UI & API
   app.get('/', (_req, res) => {
     res.redirect('/configure');
   });
   app.get('/configure', handleConfigure);
+  app.post('/api/openlist/login', handleOpenListLogin);
+  app.post('/api/openlist/test', handleOpenListTest);
 
   // Stremio Addon Protocol: Manifest
   app.get('/manifest.json', handleManifest);

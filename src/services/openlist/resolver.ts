@@ -115,11 +115,17 @@ export class PlaybackResolver {
       }
     }
 
-    // 3. Smart Title Cache Check in /<Drive>/StremList/
+    // 3. Smart Title Cache Check in /<Drive>/StremList/ and /<Drive>/
     const parentPrimary = `/${normalizeDriveName(primaryDrive)}/StremList`;
-    const titleCached = await this.findPlayableByTitleInDir(parentPrimary, target, false);
+    const rootDrive = `/${normalizeDriveName(primaryDrive)}`;
+
+    let titleCached = await this.findPlayableByTitleInDir(parentPrimary, target, false);
+    if (!titleCached && target.title) {
+      titleCached = await this.findPlayableByTitleInDir(rootDrive, target, false);
+    }
+
     if (titleCached) {
-      console.log(`[Resolver] ⚡ Cache HIT in StremList directory by title match! Found: ${titleCached.file.name}`);
+      console.log(`[Resolver] ⚡ Cache HIT in directory by title match! Found: ${titleCached.file.name}`);
       const rawUrl = await this.client.getRawUrl(titleCached.fullPath);
       if (rawUrl) {
         console.log(`[Resolver] 🚀 Direct URL retrieved: ${rawUrl}`);
@@ -130,6 +136,7 @@ export class PlaybackResolver {
     // 4. Cache Miss: Add Offline Task to Primary Drive
     console.log(`[Resolver] ⏳ Cache MISS in both drives. Starting offline download...`);
     // Pre-create directory so cloud drive has dedicated target folder
+    await this.client.mkdir(parentPrimary);
     await this.client.mkdir(primaryPath);
     const magnetUrl = `magnet:?xt=urn:btih:${infoHash}`;
     const taskAdded = await this.client.addOfflineDownload(primaryPath, [magnetUrl], primaryDrive);
@@ -173,6 +180,9 @@ export class PlaybackResolver {
           let readyFile = await this.findPlayableInPath(primaryPath, target, true);
           if (!readyFile && target.title) {
             readyFile = await this.findPlayableByTitleInDir(parentPrimary, target, true);
+          }
+          if (!readyFile && target.title) {
+            readyFile = await this.findPlayableByTitleInDir(rootDrive, target, true);
           }
 
           if (readyFile) {

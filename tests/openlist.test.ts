@@ -134,4 +134,36 @@ describe('OpenList Client & Playback Resolver', () => {
 
     await expect(playPromise).rejects.toThrow('CLIENT_ABORTED');
   });
+
+  it('getRawUrl for 115 returns OpenList /d/ proxy stream link with sign', async () => {
+    const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
+
+    vi.spyOn(client as any, 'request').mockResolvedValue({
+      code: 200,
+      message: 'success',
+      data: {
+        raw_url: 'https://cdnfhnfile.115cdn.net/123/movie.mkv?k=test',
+        sign: 'mocksig123'
+      }
+    });
+
+    const url = await client.getRawUrl('/115/StremList/hash/movie.mkv');
+    expect(url).toBe('http://127.0.0.1:5244/d/115/StremList/hash/movie.mkv?sign=mocksig123');
+  });
+
+  it('getRawUrl prepends baseUrl if raw_url is a relative path', async () => {
+    const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
+
+    vi.spyOn(client as any, 'request').mockResolvedValue({
+      code: 200,
+      message: 'success',
+      data: {
+        raw_url: '/d/PikPak/StremList/hash/movie.mkv?sign=mocksig456',
+        sign: 'mocksig456'
+      }
+    });
+
+    const url = await client.getRawUrl('/PikPak/StremList/hash/movie.mkv');
+    expect(url).toBe('http://127.0.0.1:5244/d/PikPak/StremList/hash/movie.mkv?sign=mocksig456');
+  });
 });

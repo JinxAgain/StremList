@@ -14,6 +14,9 @@
       --accent: #a855f7;
       --text: #f8fafc;
       --text-muted: #94a3b8;
+      --success: #22c55e;
+      --error: #ef4444;
+      --warning: #f59e0b;
     }
     * {
       box-sizing: border-box;
@@ -37,13 +40,13 @@
       border: 1px solid var(--border);
       border-radius: 20px;
       padding: 36px;
-      max-width: 540px;
+      max-width: 560px;
       width: 100%;
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
     }
     .header {
       text-align: center;
-      margin-bottom: 28px;
+      margin-bottom: 24px;
     }
     .title {
       font-size: 28px;
@@ -88,8 +91,69 @@
       border-color: var(--primary);
       box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2);
     }
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .btn-sm {
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: rgba(51, 65, 85, 0.5);
+      color: var(--text);
+      transition: all 0.2s;
+    }
+    .btn-sm:hover {
+      background: rgba(51, 65, 85, 0.9);
+      border-color: var(--primary);
+    }
+    .login-box {
+      display: none;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      border-radius: 12px;
+      padding: 14px;
+      margin-top: 10px;
+    }
+    .login-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .login-grid input {
+      padding: 8px 10px;
+      font-size: 13px;
+    }
+    .status-badge {
+      display: none;
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 13px;
+      margin-top: 10px;
+      line-height: 1.4;
+    }
+    .status-success {
+      background: rgba(34, 197, 94, 0.15);
+      border: 1px solid var(--success);
+      color: #86efac;
+    }
+    .status-error {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid var(--error);
+      color: #fca5a5;
+    }
+    .status-warning {
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid var(--warning);
+      color: #fde68a;
+    }
     .actions {
-      margin-top: 28px;
+      margin-top: 26px;
       display: flex;
       flex-direction: column;
       gap: 12px;
@@ -143,22 +207,39 @@
       <div class="form-group">
         <label for="openlistUrl">OpenList Server URL</label>
         <input type="text" id="openlistUrl" placeholder="http://127.0.0.1:5244" value="http://127.0.0.1:5244" required>
-        <div class="help-text">Local or LAN IP where your OpenList/AList instance runs</div>
+        <div class="help-text">Local or LAN address where OpenList runs</div>
       </div>
 
       <div class="form-group">
         <label for="openlistToken">OpenList API Token</label>
-        <input type="password" id="openlistToken" placeholder="OpenList Admin -> Manage -> API Token">
-        <div class="help-text">Required if your OpenList instance has authentication enabled</div>
+        <input type="password" id="openlistToken" placeholder="留空或输入 API Token">
+        <div class="btn-row">
+          <button type="button" class="btn-sm" id="testBtn">🔍 测试连接</button>
+          <button type="button" class="btn-sm" id="toggleLoginBtn">🔑 一键获取 Token</button>
+        </div>
+
+        <div class="login-box" id="loginBox">
+          <div style="font-size: 12px; color: var(--primary); margin-bottom: 6px;">输入 OpenList 管理员账号密码直接登录获取 Token:</div>
+          <div class="login-grid">
+            <input type="text" id="loginUsername" placeholder="用户名 (默认 admin)" value="admin">
+            <input type="password" id="loginPassword" placeholder="管理员密码">
+          </div>
+          <button type="button" class="btn-sm" id="doLoginBtn" style="width: 100%; background: #0284c7; color: white;">🚀 登录并获取 Token</button>
+        </div>
+
+        <div class="status-badge" id="statusBadge"></div>
       </div>
 
       <div class="form-group">
-        <label for="defaultDrive">Default Cloud Drive</label>
+        <label for="defaultDrive">Default Cloud Drive (默认离线网盘)</label>
         <select id="defaultDrive">
           <option value="115" selected>115 Cloud (/115)</option>
           <option value="pikpak">PikPak (/pikpak)</option>
         </select>
-        <div class="help-text">Primary storage target. If content already exists in either drive, it plays instantly.</div>
+        <div class="help-text">Primary storage target. If content exists in either drive, it plays instantly.</div>
+        <div id="drive115Tip" style="margin-top: 8px; padding: 10px 12px; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; font-size: 12px; line-height: 1.5; color: #bae6fd;">
+          💡 <strong>115 原画播放提示：</strong>115 官方 CDN 限制外部播放器直连（会触发防盗链 403 Forbidden）。请在 OpenList 后台（<a href="http://127.0.0.1:5244/@manage/storages" target="_blank" style="color: #38bdf8; text-decoration: underline;">存储管理</a>）编辑 115：开启<strong>【Web 代理】</strong>并将 WebDAV 策略设为<strong>【本地代理】</strong>（由本地 OpenList 转发原画数据流，无需占用外网带宽）。StremList 登录测试时也会自动为您优化开启！
+        </div>
       </div>
 
       <div class="form-group">
@@ -181,6 +262,94 @@
   </div>
 
   <script>
+    function showStatus(type, msg) {
+      const badge = document.getElementById('statusBadge');
+      badge.className = 'status-badge status-' + type;
+      badge.textContent = msg;
+      badge.style.display = 'block';
+    }
+
+    async function testConnection() {
+      const url = document.getElementById('openlistUrl').value.trim();
+      const token = document.getElementById('openlistToken').value.trim();
+      showStatus('warning', '⏳ 正在测试与 OpenList 的连接...');
+
+      try {
+        const res = await fetch('/api/openlist/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, token })
+        });
+        const data = await res.json();
+        if (data.success) {
+          const drivesStr = data.drives && data.drives.length ? data.drives.join(', ') : '根目录暂无子文件夹';
+          let msg = `✅ OpenList 连接正常！已识别已挂载网盘: [${drivesStr}]`;
+          if (data.proxyNotice) {
+            msg += `<br>🚀 ${data.proxyNotice}`;
+          }
+          const badge = document.getElementById('statusBadge');
+          badge.className = 'status-badge status-success';
+          badge.innerHTML = msg;
+          badge.style.display = 'block';
+          
+          // Auto select detected drive
+          const select = document.getElementById('defaultDrive');
+          if (data.drives && data.drives.some(d => d.toLowerCase().includes('115'))) {
+            select.value = '115';
+          } else if (data.drives && data.drives.some(d => d.toLowerCase().includes('pikpak'))) {
+            select.value = 'pikpak';
+          }
+        } else {
+          if (data.code === 401) {
+            showStatus('error', '❌ 401: 访问被拒绝。OpenList 需要管理员权限，请点击【一键获取 Token】输入密码登录。');
+          } else {
+            showStatus('error', `❌ 连接失败: ${data.message || '请检查 OpenList 服务是否正常启动'}`);
+          }
+        }
+      } catch (err) {
+        showStatus('error', `❌ 无法连接到 StremList 服务器: ${err.message}`);
+      }
+    }
+
+    document.getElementById('testBtn').addEventListener('click', testConnection);
+
+    document.getElementById('toggleLoginBtn').addEventListener('click', () => {
+      const box = document.getElementById('loginBox');
+      box.style.display = box.style.display === 'block' ? 'none' : 'block';
+    });
+
+    document.getElementById('doLoginBtn').addEventListener('click', async () => {
+      const url = document.getElementById('openlistUrl').value.trim();
+      const username = document.getElementById('loginUsername').value.trim();
+      const password = document.getElementById('loginPassword').value;
+
+      if (!password) {
+        alert('请输入 OpenList 管理员密码！');
+        return;
+      }
+
+      showStatus('warning', '⏳ 正在向 OpenList 发起管理员登录...');
+      try {
+        const res = await fetch('/api/openlist/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, username, password })
+        });
+        const data = await res.json();
+        if (data.success && data.token) {
+          document.getElementById('openlistToken').value = data.token;
+          document.getElementById('loginBox').style.display = 'none';
+          showStatus('success', '✅ 登录成功！已自动获取并填入 Token，配置文件已同步更新。');
+          // Re-test to fetch available drives
+          testConnection();
+        } else {
+          showStatus('error', `❌ 登录失败: ${data.message || '用户名或密码不正确'}`);
+        }
+      } catch (err) {
+        showStatus('error', `❌ 登录请求失败: ${err.message}`);
+      }
+    });
+
     function base64urlEncode(str) {
       return btoa(unescape(encodeURIComponent(str)))
         .replace(/\+/g, '-')
@@ -217,8 +386,14 @@
       try {
         await navigator.clipboard.writeText(url);
         alert('Manifest link copied to clipboard!');
-      } catch (err) {
-        // Fallback
+      } catch (err) {}
+    });
+
+    // Auto-test on page load if URL is set
+    window.addEventListener('DOMContentLoaded', () => {
+      const currentToken = document.getElementById('openlistToken').value.trim();
+      if (currentToken) {
+        testConnection();
       }
     });
   </script>

@@ -59,7 +59,8 @@ export async function handlePlay(req: Request, res: Response) {
       }
     );
 
-    console.log(`[Play] 🚀 Issuing 302 Redirect to OpenList raw_url`);
+    abortHandler = null;
+    console.log(`[Play] 🚀 Issuing 302 Redirect to stream: ${playUrl}`);
     return res.redirect(302, playUrl);
   } catch (error: any) {
     console.error(`[Play] ❌ Playback failed for ${infoHash}: ${error.message}`);

@@ -30,10 +30,13 @@ function cleanUrl(url?: string): string {
 }
 
 export function loadConfig(rawConfigStr?: string): AppConfig {
+  const rawEnvToken = process.env.OPENLIST_TOKEN?.trim() || '';
+  const sanitizedEnvToken = rawEnvToken === 'your_openlist_token_here' ? '' : rawEnvToken;
+
   const envConfig: AppConfig = {
     port: Number(process.env.PORT) || DEFAULT_CONFIG.port,
     openlistUrl: cleanUrl(process.env.OPENLIST_URL) || DEFAULT_CONFIG.openlistUrl,
-    openlistToken: process.env.OPENLIST_TOKEN?.trim() || DEFAULT_CONFIG.openlistToken,
+    openlistToken: sanitizedEnvToken || DEFAULT_CONFIG.openlistToken,
     defaultDrive: (process.env.DEFAULT_DRIVE?.toLowerCase() === 'pikpak' ? 'pikpak' : '115') as '115' | 'pikpak',
     torrentioUrl: cleanUrl(process.env.TORRENTIO_URL) || DEFAULT_CONFIG.torrentioUrl,
     cometUrl: cleanUrl(process.env.COMET_URL) || DEFAULT_CONFIG.cometUrl,
@@ -60,6 +63,11 @@ export function loadConfig(rawConfigStr?: string): AppConfig {
     let effectiveToken = (parsed.openlistToken && parsed.openlistToken.trim())
       ? parsed.openlistToken.trim()
       : envConfig.openlistToken;
+
+    if (effectiveToken === 'your_openlist_token_here') {
+      effectiveToken = envConfig.openlistToken;
+    }
+
     // If URL token is a temporary JWT (starts with ey) and server has a permanent token (starts with openlist-), prefer the permanent one
     if (effectiveToken.startsWith('ey') && envConfig.openlistToken.startsWith('openlist-')) {
       effectiveToken = envConfig.openlistToken;
