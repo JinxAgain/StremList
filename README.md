@@ -2,20 +2,28 @@
 
 > Debrid-like Stremio addon integrating **OpenList** (115 & PikPak) with torrent indexers (**Torrentio** & **Comet**) for seamless instant cloud playback.
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18.0.0-green.svg)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
+
 ---
 
-## 🌟 Features
+## 🌟 Key Features
 
-- **Debrid-like Experience**: Click any movie or TV series stream in Stremio — StremList automatically searches torrents, creates an offline download task in OpenList (115 or PikPak), polls until ready, and plays directly.
-- **Instant Cloud Playback (302 Redirect)**: Directly redirects playback to OpenList's raw streaming URL (`raw_url`). Zero media bandwidth is consumed on your StremList server.
+- **Debrid-like Cloud Streaming**: Click any movie or TV series stream in Stremio — StremList automatically searches torrents, creates an offline download task in OpenList (115 or PikPak), polls until ready, and plays immediately.
+- **Instant Cloud Playback (302 Redirect)**: Redirects playback directly to OpenList's stream URL (`raw_url`). Zero media bandwidth is consumed on your StremList server.
 - **Smart Cloud Cache Detection**: Checks both 115 and PikPak before creating new download tasks. If a torrent was previously downloaded on either drive, it starts streaming in under 500ms.
-- **Parallel Torrent Aggregation**: Queries multiple upstreams (Torrentio, Comet) concurrently with timeout protection, deduplicates by `infoHash`, and filters out low quality or dead streams.
+- **115 Anti-Hotlink Protection & Local Proxy**: Automatically configures and resolves 115 streams through OpenList's native `/d/` local proxy stream, bypassing 115 CDN's `403 Forbidden` (`invalid signature`) checks on external video players (Stremio / ExoPlayer / mpv).
+- **Parallel Torrent Aggregation**: Queries multiple upstreams (Torrentio, Comet) concurrently with timeout protection, deduplicates by `infoHash`, and filters out low-quality or dead streams.
 - **Smart Video Matcher**:
   - **Movies**: Filters out samples (< 100MB) and extras, automatically selecting the main feature film.
   - **Series**: Intelligently matches episodes by `S01E02`, `1x02`, `EP02`, or `第2集` patterns with fallback to stream index.
-- **Hybrid Configuration**:
-  - Personal local setup via `.env`
-  - Web UI setup via `/configure` for one-click installation into Stremio.
+- **Zero-Dependency Windows Tooling**:
+  - `start.bat`: One-click interactive console with live debug log.
+  - `start-background.vbs` / `start-background.bat`: **Completely silent background runner without console window**.
+  - `stop.bat`: One-click shutdown script.
+  - Automatically fetches portable Node.js v20 if Node is not installed on the system.
+- **Web Configuration UI**: Visual setup at `http://127.0.0.1:7000/configure` with one-click OpenList admin authentication and one-click Stremio addon installation.
 
 ---
 
@@ -25,8 +33,8 @@
 +-------------------------------------------------------------------------+
 |                              Stremio Client                             |
 +-------------------------------------------------------------------------+
-       | 1. GET /stream/:type/:id.json          ^ 4. 302 Redirect to raw_url
-       |                                        |    (direct cloud playback)
+       | 1. GET /stream/:type/:id.json          ^ 4. 302 Redirect to stream
+       |                                        |    (direct / proxy playback)
        v                                        |
 +-----------------------------------------------+-------------------------+
 |                           StremList Server                              |
@@ -35,13 +43,13 @@
 |   - GET /manifest.json & /:config/manifest.json                         |
 |   - GET /stream/:type/:id.json & /:config/stream/:type/:id.json         |
 |   - GET /play/:hash & /:config/play/:hash                               |
-|   - GET /configure                                                      |
+|   - GET /configure & POST /api/openlist/login & /api/openlist/test      |
 |                                                                         |
 |  [Scraper Aggregator]            [OpenList Client & Resolver]           |
 |   - Torrentio & Comet             - Cache verification (115 / PikPak)   |
-|   - Deduplication by infoHash     - Add offline download task           |
-|   - Rewrite to /play/:hash        - Directory polling & abort detection |
-|                                   - Resolves raw playback URL           |
+|   - Deduplication by infoHash     - Pre-creates download folders        |
+|   - Rewrite to /play/:hash        - Adds offline download (115 Open)    |
+|                                   - Resolves raw / proxy playback URL   |
 +-------------------------------------------------------------------------+
         | (Parallel HTTP requests)                      | (REST API)
         v                                               v
@@ -56,11 +64,35 @@
 
 ## 🚀 Quick Start
 
-### 1. Prerequisites
-- **Node.js** >= 18.0.0
-- An active [OpenList](https://fox.oplist.org) / AList instance with storage mounted (e.g. `/115` and/or `/pikpak`).
+### Method 1: Windows One-Click (Recommended for Windows)
 
-### 2. Installation
+Simply clone or download this repository, and use the included scripts:
+
+1. **Run in Background (Silent / No Console Window)**:
+   - Double-click **`start-background.vbs`** (or **`start-background.bat`**).
+   - The server launches silently in the background with **no command prompt window**.
+   - Your default browser will automatically open to `http://127.0.0.1:7000/configure`.
+   - All server logs are written to `debug.log`.
+
+2. **Run in Debug Console (With Live Logs)**:
+   - Double-click **`start.bat`**.
+   - A console window will open, streaming live server activity.
+
+3. **Stop Background Server**:
+   - Double-click **`stop.bat`** to cleanly terminate the background StremList process and free port 7000.
+
+> [!TIP]
+> **No Node.js installed?** No problem! The start scripts will automatically detect if Node.js is missing and download the official portable Node.js v20 LTS into a local `.bin` folder.
+
+---
+
+### Method 2: Cross-Platform (Linux / macOS / Windows)
+
+#### 1. Prerequisites
+- **Node.js** >= 18.0.0
+- An active [OpenList](https://fox.oplist.org) or AList instance with mounted storage (`/115` and/or `/pikpak`).
+
+#### 2. Install & Start
 
 ```bash
 # Clone the repository
@@ -70,68 +102,86 @@ cd StremList
 # Install dependencies
 npm install
 
-# Build TypeScript
-npm run build
-```
-
-### 3. Configuration
-
-Copy the example environment configuration:
-
-```bash
+# Copy example environment configuration
 cp .env.example .env
+
+# Run development server
+npm run dev
 ```
 
-Edit `.env` to suit your environment:
-
-```env
-PORT=7000
-
-# OpenList API endpoint and Token (from OpenList Admin -> Manage -> API Token)
-OPENLIST_URL=http://127.0.0.1:5244
-OPENLIST_TOKEN=your_openlist_token
-
-# Default target storage ('115' or 'pikpak')
-DEFAULT_DRIVE=115
-
-# Upstream torrent indexers
-TORRENTIO_URL=https://torrentio.strem.fun
-COMET_URL=https://comet.elfhosted.com
-
-# Polling configuration (timeout in seconds, interval in ms)
-POLL_TIMEOUT=25
-POLL_INTERVAL=1500
-```
-
-### 4. Running the Server
+For production deployment:
 
 ```bash
-# Development mode (with live reload)
-npm run dev
-
-# Production mode
 npm run build
 npm start
 ```
 
-Once started, open `http://127.0.0.1:7000/configure` in your browser to configure and click **Install Addon in Stremio**.
+---
+
+## ⚙️ OpenList & Cloud Drive Configuration
+
+### 1. 115 Cloud Storage Setup (Crucial)
+
+115 Cloud CDN enforces strict anti-hotlink validation (checking `User-Agent` and client session signatures). If third-party media players (Stremio / ExoPlayer / mpv) connect to raw 115 CDN links directly, 115 rejects them with `HTTP 403 Forbidden` (`invalid signature`).
+
+To ensure smooth playback:
+1. In OpenList Admin Panel (`http://127.0.0.1:5244/@manage/storages`), click **Edit** on your `115` or `115 Open` storage.
+2. Enable **Web Proxy** (`web_proxy`: ON).
+3. Set **WebDAV Policy** to **Local Proxy** (`native_proxy` / 本地代理).
+4. Save the storage settings.
+
+> [!NOTE]
+> **Automatic Optimization**: When you connect via StremList's Web UI (`/configure`) using an OpenList Admin account, **StremList automatically enables Web Proxy and Local Proxy for your 115 mount** via the OpenList Admin API.
+
+### 2. PikPak Storage Setup
+
+Mount your PikPak drive in OpenList at `/pikpak` or `/PikPak`. PikPak CDN links support direct streaming out of the box.
 
 ---
 
 ## 📺 How to Use with Stremio
 
-1. Start StremList (`npm start`).
-2. Open your web browser to `http://127.0.0.1:7000/configure`.
-3. Fill in your OpenList server address and token, then click **Install Addon in Stremio**.
-4. Stremio desktop will open and prompt you to install **StremList (115 / PikPak)**.
-5. Search for any movie or show in Stremio.
-6. Select any stream labeled `[StremList ⚡ 115/PikPak]` to play!
+1. Start StremList (e.g. double-click `start-background.vbs` or run `npm run dev`).
+2. Open your browser to `http://127.0.0.1:7000/configure`.
+3. Enter your OpenList URL (default: `http://127.0.0.1:5244`).
+4. Click **🔑 一键获取 Token** and enter your OpenList admin credentials, or paste your API Token directly.
+5. Click **🔍 测试连接** to verify connectivity.
+6. Click **⚡ Install Addon in Stremio** (or copy the manifest link to install manually in Stremio).
+7. In Stremio, search for any movie or TV series and select any stream labeled `[StremList ⚡ 115/PikPak]`!
+
+---
+
+## 🛠️ Environment Variables (.env)
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `PORT` | `7000` | HTTP port for StremList addon server |
+| `OPENLIST_URL` | `http://127.0.0.1:5244` | OpenList server URL |
+| `OPENLIST_TOKEN` | `""` | OpenList API Token (JWT or permanent token) |
+| `DEFAULT_DRIVE` | `115` | Default target cloud drive (`115` or `pikpak`) |
+| `TORRENTIO_URL` | `https://torrentio.strem.fun` | Upstream Torrentio scraper URL |
+| `COMET_URL` | `https://comet.elfhosted.com` | Upstream Comet scraper URL |
+| `POLL_TIMEOUT` | `25` | Maximum seconds to wait for offline download completion |
+| `POLL_INTERVAL` | `1500` | Polling interval in milliseconds |
+
+---
+
+## 📦 Packaging for Distribution
+
+To produce a clean, ready-to-use distribution `.zip` archive for other Windows users:
+
+```powershell
+.\pack.bat
+# or: powershell -ExecutionPolicy Bypass -File pack.ps1
+```
+
+This creates `StremList-Windows-Debug.zip`, which contains all source code, dependencies manifest, and launcher scripts (`start.bat`, `start-background.vbs`, `stop.bat`).
 
 ---
 
 ## 🧪 Testing
 
-StremList includes a full test suite covering configuration, file matching, torrent scraping, OpenList integration, and end-to-end flows:
+Run the full automated test suite (including unit and end-to-end integration tests):
 
 ```bash
 npm test
