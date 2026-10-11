@@ -26,8 +26,13 @@ Copy-Item "start.ps1" -Destination $tempDir
 if (Test-Path "start-background.bat") { Copy-Item "start-background.bat" -Destination $tempDir }
 if (Test-Path "start-background.vbs") { Copy-Item "start-background.vbs" -Destination $tempDir }
 if (Test-Path "start-background.ps1") { Copy-Item "start-background.ps1" -Destination $tempDir }
+if (Test-Path "configure.bat") { Copy-Item "configure.bat" -Destination $tempDir }
 if (Test-Path "stop.bat") { Copy-Item "stop.bat" -Destination $tempDir }
 if (Test-Path "stop.ps1") { Copy-Item "stop.ps1" -Destination $tempDir }
+if (Test-Path "autostart-enable.bat") { Copy-Item "autostart-enable.bat" -Destination $tempDir }
+if (Test-Path "autostart-enable.ps1") { Copy-Item "autostart-enable.ps1" -Destination $tempDir }
+if (Test-Path "autostart-disable.bat") { Copy-Item "autostart-disable.bat" -Destination $tempDir }
+if (Test-Path "autostart-disable.ps1") { Copy-Item "autostart-disable.ps1" -Destination $tempDir }
 if (Test-Path "README.md") { Copy-Item "README.md" -Destination $tempDir }
 
 Write-Host "[2/3] Compressing into $zipName..." -ForegroundColor Cyan

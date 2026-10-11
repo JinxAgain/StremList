@@ -1,4 +1,8 @@
 # StremList Windows Silent / Background Launcher
+param(
+    [switch]$OpenBrowser
+)
+
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
@@ -98,5 +102,7 @@ if ($conn -and $conn.OwningProcess) {
     Set-Content -Path $pidFile -Value $conn.OwningProcess
 }
 
-# 8. Launch configure page in default browser
-Start-Process "http://127.0.0.1:7000/configure"
+# 8. Launch configure page in default browser only if requested
+if ($OpenBrowser) {
+    Start-Process "http://127.0.0.1:7000/configure"
+}

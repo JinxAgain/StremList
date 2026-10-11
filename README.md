@@ -68,17 +68,24 @@
 
 Simply clone or download this repository, and use the included scripts:
 
-1. **Run in Background (Silent / No Console Window)**:
+1. **First-Time Setup & Stremio Installation**:
+   - Double-click **`start.bat`**.
+   - Your browser will open to `http://127.0.0.1:7000/configure`.
+   - Enter your OpenList admin credentials to fetch the token, then click **⚡ Install Addon in Stremio**.
+   - **You only need to install it once!** Stremio saves your addon configuration in your account, so you never need to reinstall it after computer reboots.
+
+2. **Silent Background Execution**:
    - Double-click **`start-background.vbs`** (or **`start-background.bat`**).
-   - The server launches silently in the background with **no command prompt window**.
-   - Your default browser will automatically open to `http://127.0.0.1:7000/configure`.
+   - Launches 100% silently in the background with **zero console window** and **no browser popup**.
+   - Need to adjust settings later? Just double-click **`configure.bat`**.
    - All server logs are written to `debug.log`.
 
-2. **Run in Debug Console (With Live Logs)**:
-   - Double-click **`start.bat`**.
-   - A console window will open, streaming live server activity.
+3. **Auto-Start on Boot (Windows Startup)**:
+   - Double-click **`autostart-enable.bat`** — automatically adds StremList to your Windows Startup folder!
+   - StremList will silently run in the background every time Windows starts up.
+   - To disable autostart at any time, double-click **`autostart-disable.bat`**.
 
-3. **Stop Background Server**:
+4. **Stop Background Server**:
    - Double-click **`stop.bat`** to cleanly terminate the background StremList process and free port 7000.
 
 > [!TIP]
