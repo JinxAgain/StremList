@@ -1,5 +1,5 @@
 import * as cheerio from 'cheerio';
-import { BaseProvider, isEpisodeMatch, extractSeasonsFromText, toCnSeason, extractMetaFromFilename } from './base.js';
+import { BaseProvider, isEpisodeMatch, extractSeasonsFromText, toCnSeason, extractMetaFromFilename, extractFilenameFromResponse } from './base.js';
 import { ZimukuBmpSolver } from './zimuku-solver.js';
 import { SubtitleCandidate, SubtitleTags, VideoQueryMeta } from '../types.js';
 
@@ -19,12 +19,12 @@ export class ZimukuProvider extends BaseProvider {
   }
 
   public static isDomainHealthy(domain: string): boolean {
-    const until = this.unhealthyDomains.get(domain) || 0;
+    const until = ZimukuProvider.unhealthyDomains.get(domain) || 0;
     return Date.now() / 1000 > until;
   }
 
   public static markDomainUnhealthy(domain: string, cooldownSecs = 600): void {
-    this.unhealthyDomains.set(domain, Date.now() / 1000 + cooldownSecs);
+    ZimukuProvider.unhealthyDomains.set(domain, Date.now() / 1000 + cooldownSecs);
     console.warn(`[Zimuku] Marking mirror ${domain} as unhealthy for ${cooldownSecs}s`);
   }
 
@@ -64,7 +64,8 @@ export class ZimukuProvider extends BaseProvider {
         const resp = await this.client.get(urlStr, {
           headers,
           timeout,
-          responseType: 'arraybuffer'
+          responseType: 'arraybuffer',
+          validateStatus: () => true
         });
 
         const setCookies = resp.headers['set-cookie'];
@@ -75,7 +76,7 @@ export class ZimukuProvider extends BaseProvider {
         const buffer = Buffer.from(resp.data);
         const text = buffer.toString('utf-8');
 
-        // Detect Yunsuo WAF
+        // Detect Yunsuo WAF challenge page
         if (text.includes('security_verify_img') || text.includes('YunsuoAutoJump')) {
           console.info(`[Zimuku] WAF challenge detected for ${urlStr}, solving...`);
           const solved = await this.solveWafCaptcha(urlStr, text);
@@ -96,12 +97,24 @@ export class ZimukuProvider extends BaseProvider {
             const redirectResp = await this.client.get(redirectUrl, {
               headers: { ...headers, Referer: urlStr },
               timeout,
-              responseType: 'arraybuffer'
+              responseType: 'arraybuffer',
+              validateStatus: () => true
             });
-            return { data: Buffer.from(redirectResp.data), status: redirectResp.status };
+            const redCookies = redirectResp.headers['set-cookie'];
+            if (Array.isArray(redCookies)) {
+              redCookies.forEach((c) => this.setCookie(c));
+            }
+            if (redirectResp.status === 200) {
+              return { data: Buffer.from(redirectResp.data), status: redirectResp.status };
+            }
           } catch {
             // Ignore redirect error
           }
+        }
+
+        if (resp.status !== 200) {
+          console.warn(`[Zimuku] Non-200 status (${resp.status}) for ${urlStr}`);
+          return null;
         }
 
         return { data: buffer, status: resp.status };
@@ -142,13 +155,19 @@ export class ZimukuProvider extends BaseProvider {
       }
 
       const verifyUrl = `${urlObj.protocol}//${urlObj.host}/?security_verify_img=${codeHex}`;
-      await this.client.get(verifyUrl, {
+      const verifyResp = await this.client.get(verifyUrl, {
         headers: {
           Referer: urlStr,
           Cookie: this.getCookieHeader(`${urlObj.protocol}//${urlObj.host}`)
         },
-        timeout: 10000
+        timeout: 10000,
+        validateStatus: () => true
       });
+
+      const setCookies = verifyResp.headers['set-cookie'];
+      if (Array.isArray(setCookies)) {
+        setCookies.forEach((c) => this.setCookie(c));
+      }
       return true;
     } catch (err) {
       console.error('[Zimuku] Captcha bypass error:', err);
@@ -416,12 +435,43 @@ export class ZimukuProvider extends BaseProvider {
     return candidates;
   }
 
+  private normalizeUrl(domain: string, href: string): string {
+    try {
+      const parsed = new URL(href, domain);
+      let p = parsed.pathname;
+      if (parsed.search) p += parsed.search;
+      if (!p.startsWith('/')) p = '/' + p;
+      return `${domain}${p}`;
+    } catch {
+      let clean = href.startsWith('http') ? href.replace(/^https?:\/\/[^/]+/, '') : href;
+      if (!clean.startsWith('/')) clean = '/' + clean;
+      return `${domain}${clean}`;
+    }
+  }
+
   public async download(candidate: SubtitleCandidate): Promise<{ buffer: Buffer; filename: string } | null> {
-    const domains = [this.baseUrl, ...this.fallbackUrls].filter(ZimukuProvider.isDomainHealthy);
-    if (domains.length === 0) domains.push(this.baseUrl);
+    let origDomain = this.baseUrl;
+    if (candidate.pageUrl) {
+      try {
+        const u = new URL(candidate.pageUrl);
+        origDomain = `${u.protocol}//${u.host}`;
+      } catch {}
+    }
+
+    const domains = [origDomain, ...this.fallbackUrls].filter((d, i, self) =>
+      self.indexOf(d) === i && ZimukuProvider.isDomainHealthy(d)
+    );
+    if (domains.length === 0) domains.push(origDomain);
+
+    let path = `/detail/${candidate.id}.html`;
+    if (candidate.pageUrl) {
+      try {
+        path = new URL(candidate.pageUrl).pathname;
+      } catch {}
+    }
 
     for (const domain of domains) {
-      const detailUrl = `${domain}/detail/${candidate.id}.html`;
+      const detailUrl = `${domain}${path}`;
       const resp = await this.fetchPage(detailUrl);
       if (!resp) continue;
 
@@ -429,8 +479,7 @@ export class ZimukuProvider extends BaseProvider {
       const dlSub = $('li.dlsub a').first();
       if (!dlSub.length || !dlSub.attr('href')) continue;
 
-      const dlPath = dlSub.attr('href')!;
-      const dlUrl = dlPath.startsWith('http') ? dlPath : `${domain}${dlPath}`;
+      const dlUrl = this.normalizeUrl(domain, dlSub.attr('href')!);
       const dlPageResp = await this.fetchPage(dlUrl, detailUrl);
       if (!dlPageResp) continue;
 
@@ -439,30 +488,25 @@ export class ZimukuProvider extends BaseProvider {
       const links = linksBox.find('a[href]').toArray();
 
       for (const a of links) {
-        const fileHref = $dl(a).attr('href')!;
-        const fileUrl = fileHref.startsWith('http') ? fileHref : `${domain}${fileHref}`;
+        const fileUrl = this.normalizeUrl(domain, $dl(a).attr('href')!);
 
         try {
           const fileResp = await this.client.get(fileUrl, {
             headers: { Referer: dlUrl, Cookie: this.getCookieHeader(domain) },
             responseType: 'arraybuffer',
-            timeout: 25000
+            timeout: 25000,
+            validateStatus: () => true
           });
 
           if (fileResp.status === 200 && fileResp.data) {
             const buf = Buffer.from(fileResp.data);
             if (buf.length >= 100) {
-              const cd = fileResp.headers['content-disposition'] || '';
-              let filename = `zimuku_${candidate.id}.zip`;
-              const mStar = cd.match(/filename\*=(?:utf-8|UTF-8)''([^;]+)/i);
-              if (mStar) {
-                try {
-                  filename = decodeURIComponent(mStar[1].replace(/['"]/g, ''));
-                } catch {}
-              } else {
-                const mFn = cd.match(/filename="?([^";]+)"?/i);
-                if (mFn) filename = mFn[1].trim();
-              }
+              const filename = extractFilenameFromResponse(
+                fileResp.headers,
+                fileUrl,
+                buf,
+                `zimuku_${candidate.id}.zip`
+              );
               return { buffer: buf, filename };
             }
           }

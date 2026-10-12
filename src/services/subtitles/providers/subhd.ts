@@ -1,5 +1,5 @@
 import * as cheerio from 'cheerio';
-import { BaseProvider, isEpisodeMatch, extractMetaFromFilename } from './base.js';
+import { BaseProvider, isEpisodeMatch, extractMetaFromFilename, extractFilenameFromResponse } from './base.js';
 import { SubtitleCandidate, SubtitleTags, VideoQueryMeta } from '../types.js';
 
 const SOURCE_BADGE_MAP: Record<string, string> = {
@@ -74,7 +74,7 @@ export class SubhdProvider extends BaseProvider {
         let newFound = 0;
 
         try {
-          const resp = await this.client.get(searchUrl, { timeout: 6000 });
+          const resp = await this.client.get(searchUrl, { timeout: 6000, validateStatus: () => true });
           if (resp.status === 200 && typeof resp.data === 'string') {
             const items = this.parseSearchResults(resp.data, domain, meta);
             for (const item of items) {
@@ -243,18 +243,54 @@ export class SubhdProvider extends BaseProvider {
 
   public async download(candidate: SubtitleCandidate): Promise<{ buffer: Buffer; filename: string } | null> {
     const sid = candidate.id;
-    const domains = [this.baseUrl, ...this.fallbackUrls].filter((d, i, self) =>
+    let origDomain = this.baseUrl;
+    if (candidate.pageUrl) {
+      try {
+        const u = new URL(candidate.pageUrl);
+        origDomain = `${u.protocol}//${u.host}`;
+      } catch {}
+    }
+
+    const domains = [origDomain, ...this.fallbackUrls].filter((d, i, self) =>
       self.indexOf(d) === i && SubhdProvider.isDomainHealthy(d)
     );
-    if (domains.length === 0) domains.push(this.baseUrl);
+    if (domains.length === 0) domains.push(origDomain);
 
     for (const domain of domains) {
       const pageUrl = `${domain}/a/${sid}`;
       try {
-        const ajaxHeaders = {
+        const cookies: Record<string, string> = {};
+        const updateCookies = (setCookieHeaders?: string[] | string) => {
+          if (!setCookieHeaders) return;
+          const arr = Array.isArray(setCookieHeaders) ? setCookieHeaders : [setCookieHeaders];
+          for (const header of arr) {
+            const parts = header.split(';');
+            if (parts.length > 0) {
+              const [k, v] = parts[0].split('=');
+              if (k && v) {
+                cookies[k.trim()] = v.trim();
+              }
+            }
+          }
+        };
+        const getCookieHeader = () => {
+          return Object.entries(cookies)
+            .map(([k, v]) => `${k}=${v}`)
+            .join('; ');
+        };
+
+        const ajaxHeaders: Record<string, string> = {
           Origin: domain,
           Referer: pageUrl,
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
           'X-Requested-With': 'XMLHttpRequest',
+          'Sec-Ch-Ua': '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
+          'Sec-Ch-Ua-Mobile': '?0',
+          'Sec-Ch-Ua-Platform': '"Windows"',
+          'Sec-Fetch-Dest': 'empty',
+          'Sec-Fetch-Mode': 'cors',
+          'Sec-Fetch-Site': 'same-origin',
           Accept: 'application/json, text/javascript, */*; q=0.01'
         };
 
@@ -262,8 +298,13 @@ export class SubhdProvider extends BaseProvider {
         const prepResp = await this.client.post(
           `${domain}/api/sub/prepare-download`,
           { sid },
-          { headers: ajaxHeaders, timeout: 5000 }
+          {
+            headers: { ...ajaxHeaders, Cookie: getCookieHeader() },
+            timeout: 8000,
+            validateStatus: () => true
+          }
         );
+        updateCookies(prepResp.headers['set-cookie']);
 
         if (prepResp.status === 403 || !prepResp.data?.success) {
           const msg = String(prepResp.data?.msg || '');
@@ -274,11 +315,18 @@ export class SubhdProvider extends BaseProvider {
         const downPath = prepResp.data.url || `/down/${sid}`;
         const downUrl = downPath.startsWith('http') ? downPath : `${domain}${downPath}`;
 
-        // Step 2: Visit temp page
+        // Step 2: Visit temp page (essential before requesting /api/sub/down)
         const tempResp = await this.client.get(downUrl, {
-          headers: { Referer: pageUrl },
-          timeout: 5000
+          headers: {
+            Referer: pageUrl,
+            'User-Agent': ajaxHeaders['User-Agent'],
+            Cookie: getCookieHeader()
+          },
+          timeout: 8000,
+          validateStatus: () => true
         });
+        updateCookies(tempResp.headers['set-cookie']);
+
         if (tempResp.status === 403) {
           SubhdProvider.markRateLimited(600, 'temp page 403');
           continue;
@@ -288,8 +336,17 @@ export class SubhdProvider extends BaseProvider {
         const apiResp = await this.client.post(
           `${domain}/api/sub/down`,
           { sid, cap: '' },
-          { headers: { ...ajaxHeaders, Referer: downUrl }, timeout: 5000 }
+          {
+            headers: {
+              ...ajaxHeaders,
+              Referer: downUrl,
+              Cookie: getCookieHeader()
+            },
+            timeout: 8000,
+            validateStatus: () => true
+          }
         );
+        updateCookies(apiResp.headers['set-cookie']);
 
         if (apiResp.status === 403 || !apiResp.data?.success || !apiResp.data?.url) {
           const msg = String(apiResp.data?.msg || '');
@@ -302,25 +359,19 @@ export class SubhdProvider extends BaseProvider {
 
         // Step 4: Fetch actual archive bytes
         const fileResp = await this.client.get(fileUrl, {
-          headers: { Referer: downUrl },
+          headers: {
+            Referer: downUrl,
+            'User-Agent': ajaxHeaders['User-Agent'],
+            Cookie: getCookieHeader()
+          },
           responseType: 'arraybuffer',
-          timeout: 25000
+          timeout: 25000,
+          validateStatus: () => true
         });
 
         if (fileResp.status === 200 && fileResp.data) {
           const buf = Buffer.from(fileResp.data);
-          let filename = `subhd_${sid}.zip`;
-          const cd = fileResp.headers['content-disposition'] || '';
-          const mStar = cd.match(/filename\*=(?:utf-8|UTF-8)''([^;]+)/i);
-          if (mStar) {
-            try {
-              filename = decodeURIComponent(mStar[1].replace(/['"]/g, ''));
-            } catch {}
-          } else {
-            const mFn = cd.match(/filename="?([^";]+)"?/i);
-            if (mFn) filename = mFn[1].trim();
-          }
-
+          const filename = extractFilenameFromResponse(fileResp.headers, fileUrl, buf, `subhd_${sid}.zip`);
           return { buffer: buf, filename };
         }
       } catch (err: any) {

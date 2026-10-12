@@ -260,7 +260,10 @@ export async function handleDownloadSubtitle(req: Request, res: Response) {
   let subName = rawFilename;
 
   // 3. Direct subtitle vs archive unpack
-  if (SUBTITLE_EXTENSIONS.some((ext) => rawFilename.toLowerCase().endsWith(ext))) {
+  if (
+    SUBTITLE_EXTENSIONS.some((ext) => rawFilename.toLowerCase().endsWith(ext)) ||
+    SubtitleExtractor.isRawSubtitleBuffer(archiveBytes)
+  ) {
     subBytes = archiveBytes;
   } else {
     const extracted = SubtitleExtractor.extractBestSubtitle(archiveBytes, rawFilename, targetEp);

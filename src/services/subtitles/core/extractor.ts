@@ -72,6 +72,15 @@ export class SubtitleExtractor {
 
     const lowerName = originalFilename.toLowerCase();
 
+    // Case 0: Sniff content buffer - if already a raw text subtitle, don't attempt archive extraction
+    if (SubtitleExtractor.isRawSubtitleBuffer(contentBytes)) {
+      const ext = SubtitleExtractor.sniffSubtitleExtension(contentBytes);
+      const cleanName = SUBTITLE_EXTENSIONS.some((e) => lowerName.endsWith(e))
+        ? originalFilename
+        : `${path.parse(originalFilename).name}${ext}`;
+      return { buffer: contentBytes, filename: cleanName };
+    }
+
     // Case 1: GZIP stream
     if (
       (contentBytes.length >= 2 && contentBytes[0] === 0x1f && contentBytes[1] === 0x8b) ||
@@ -103,6 +112,34 @@ export class SubtitleExtractor {
 
     // Case 4: Generic Archive (.rar, .7z, .tar, etc.)
     return this.extractGenericArchive(contentBytes, originalFilename, episode, preferBilingual, preferTraditional);
+  }
+
+  public static isRawSubtitleBuffer(buf: Buffer): boolean {
+    if (!buf || buf.length < 10) return false;
+    // Archive magic bytes: PK (zip), Rar! (rar), 7z (7z), \x1f\x8b (gzip)
+    if (buf.length >= 2 && buf[0] === 0x50 && buf[1] === 0x4b) return false;
+    if (buf.length >= 4 && buf[0] === 0x52 && buf[1] === 0x61 && buf[2] === 0x72 && buf[3] === 0x21) return false;
+    if (buf.length >= 6 && buf.slice(0, 6).toString('binary') === '7z\xbc\xaf\x27\x1c') return false;
+    if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b) return false;
+
+    const sample = buf.slice(0, 4096).toString('utf-8', 0, Math.min(buf.length, 4096));
+    if (sample.includes('[Script Info]') || sample.includes('ScriptType:') || sample.includes('Dialogue:')) {
+      return true;
+    }
+    if (sample.includes('WEBVTT')) {
+      return true;
+    }
+    if (/\d{1,2}:\d{2}:\d{2}[,\.]\d{1,3}\s*-->\s*\d{1,2}:\d{2}:\d{2}/.test(sample)) {
+      return true;
+    }
+    return false;
+  }
+
+  public static sniffSubtitleExtension(buf: Buffer): string {
+    const sample = buf.slice(0, 4096).toString('utf-8', 0, Math.min(buf.length, 4096));
+    if (sample.includes('[Script Info]') || sample.includes('ScriptType:')) return '.ass';
+    if (sample.includes('WEBVTT')) return '.vtt';
+    return '.srt';
   }
 
   private static extractFromZip(

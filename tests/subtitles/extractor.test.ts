@@ -21,4 +21,24 @@ describe('SubtitleExtractor', () => {
     // When requesting E03, both E01 and E02 are disqualified with -5000 points
     expect(best).toBeNull();
   });
+
+  it('detects and recovers raw ASS text even if misnamed as .zip', () => {
+    const rawAss = Buffer.from('[Script Info]\nTitle: Test Sub\nDialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,Hello');
+    expect(SubtitleExtractor.isRawSubtitleBuffer(rawAss)).toBe(true);
+    expect(SubtitleExtractor.sniffSubtitleExtension(rawAss)).toBe('.ass');
+
+    const result = SubtitleExtractor.extractBestSubtitle(rawAss, 'subhd_Cmr0uS.zip');
+    expect(result).not.toBeNull();
+    expect(result?.filename).toBe('subhd_Cmr0uS.ass');
+  });
+
+  it('detects and recovers raw SRT text even if misnamed as .zip', () => {
+    const rawSrt = Buffer.from('1\n00:00:01,000 --> 00:00:03,000\nHello World\n');
+    expect(SubtitleExtractor.isRawSubtitleBuffer(rawSrt)).toBe(true);
+    expect(SubtitleExtractor.sniffSubtitleExtension(rawSrt)).toBe('.srt');
+
+    const result = SubtitleExtractor.extractBestSubtitle(rawSrt, 'subtitle_archive.zip');
+    expect(result).not.toBeNull();
+    expect(result?.filename).toBe('subtitle_archive.srt');
+  });
 });

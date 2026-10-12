@@ -20,6 +20,9 @@ describe('Config Module', () => {
     process.env.POLL_TIMEOUT = '30';
     process.env.POLL_INTERVAL = '2000';
 
+    process.env.TORRENTIO_URL = 'https://torrentio.strem.fun';
+    process.env.COMET_URL = 'https://comet.elfhosted.com';
+
     const config = loadConfig();
 
     expect(config.port).toBe(8000);
@@ -37,6 +40,8 @@ describe('Config Module', () => {
     delete process.env.OPENLIST_URL;
     delete process.env.OPENLIST_TOKEN;
     delete process.env.DEFAULT_DRIVE;
+    delete process.env.TORRENTIO_URL;
+    delete process.env.COMET_URL;
 
     const config = loadConfig();
 

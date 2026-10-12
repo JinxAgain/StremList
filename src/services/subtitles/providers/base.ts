@@ -296,11 +296,62 @@ export function formatSubtitleInfo(
   return { label, filename: `${filenameBody}.srt` };
 }
 
+export function extractFilenameFromResponse(
+  headers: Record<string, any>,
+  url: string,
+  buffer?: Buffer,
+  defaultName = 'subtitle.bin'
+): string {
+  const cd = headers['content-disposition'] || '';
+  if (cd) {
+    const mStar = cd.match(/filename\*=(?:utf-8|UTF-8)''([^;]+)/i);
+    if (mStar) {
+      try {
+        return decodeURIComponent(mStar[1].replace(/['"]/g, ''));
+      } catch {}
+    }
+    const mFn = cd.match(/filename="?([^";]+)"?/i);
+    if (mFn) {
+      let rawName = mFn[1].trim();
+      try {
+        rawName = Buffer.from(rawName, 'latin1').toString('utf-8');
+      } catch {}
+      return rawName;
+    }
+  }
+
+  // Fallback to URL path
+  try {
+    const parsed = new URL(url);
+    const base = parsed.pathname.split('/').pop()?.split('?')[0]?.trim();
+    if (base && base.includes('.')) {
+      return decodeURIComponent(base);
+    }
+  } catch {}
+
+  // Fallback to content sniffing
+  if (buffer && buffer.length > 0) {
+    const head = buffer.slice(0, 4096).toString('utf-8', 0, Math.min(buffer.length, 4096));
+    if (head.includes('[Script Info]') || head.includes('ScriptType:') || head.includes('Dialogue:')) {
+      return defaultName.replace(/\.[^.]+$/, '') + '.ass';
+    }
+    if (head.includes('WEBVTT')) {
+      return defaultName.replace(/\.[^.]+$/, '') + '.vtt';
+    }
+    if (/\d{1,2}:\d{2}:\d{2}[,\.]\d{1,3}\s*-->\s*\d{1,2}:\d{2}:\d{2}/.test(head)) {
+      return defaultName.replace(/\.[^.]+$/, '') + '.srt';
+    }
+  }
+
+  return defaultName;
+}
+
 export abstract class BaseProvider {
   public abstract readonly name: string;
   protected client: AxiosInstance;
 
   constructor(proxy?: string) {
+    const effectiveProxy = proxy || process.env.SUBTITLE_PROXY;
     this.client = axios.create({
       timeout: 12000,
       headers: {
@@ -311,8 +362,16 @@ export abstract class BaseProvider {
       }
     });
 
-    if (proxy) {
-      // Axios proxy configuration can be passed if needed
+    if (effectiveProxy) {
+      try {
+        const u = new URL(effectiveProxy);
+        this.client.defaults.proxy = {
+          protocol: u.protocol.replace(':', ''),
+          host: u.hostname,
+          port: parseInt(u.port, 10) || (u.protocol === 'https:' ? 443 : 80),
+          auth: u.username ? { username: u.username, password: u.password } : undefined
+        };
+      } catch {}
     }
   }
 
