@@ -1,9 +1,16 @@
+export interface StremioResourceObject {
+  name: string;
+  types?: ('movie' | 'series' | 'anime' | 'other')[];
+  idPrefixes?: string[];
+  extra?: { name: string; isRequired?: boolean; options?: string[] }[];
+}
+
 export interface StremioManifest {
   id: string;
   version: string;
   name: string;
   description: string;
-  resources: string[];
+  resources: (string | StremioResourceObject)[];
   types: ('movie' | 'series' | 'anime' | 'other')[];
   idPrefixes?: string[];
   catalogs?: any[];

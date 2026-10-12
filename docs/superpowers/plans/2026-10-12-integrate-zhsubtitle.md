@@ -552,7 +552,7 @@ Expected: PASS
 **Interfaces:**
 - Produces: AppConfig subtitle settings (`subtitleEnabled`, `subtitleLang`, `subtitleSource`, `subtitleMaxResults`, `subtitleProxy`)
 
-- [ ] **Step 1: Write failing test in `tests/subtitles/config.test.ts`**
+- [x] **Step 1: Write failing test in `tests/subtitles/config.test.ts`**
 ```typescript
 import { describe, it, expect } from 'vitest';
 import { loadConfig } from '../../src/config.js';
@@ -568,17 +568,17 @@ describe('AppConfig Subtitle Settings', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 Run: `npm test tests/subtitles/config.test.ts`
 Expected: FAIL (properties missing on config)
 
-- [ ] **Step 3: Implement config fields and configure.html UI**
+- [x] **Step 3: Implement config fields and configure.html UI**
 - In `src/config.ts`: Add `subtitleEnabled`, `subtitleLang`, `subtitleSource`, `subtitleMaxResults`, `subtitleProxy` to `AppConfig`, `DEFAULT_CONFIG`, `loadConfig`, `saveConfigToEnv`.
 - In `src/routes/configure.ts`: Support pre-populating and saving subtitle options in `/api/config/save`.
 - In `src/public/configure.html`: Add **中文字幕设置** card with toggle, language preference dropdown, source dropdown, max results dropdown, and proxy input. Preserve clean installation link `http://127.0.0.1:7000/manifest.json`.
 - In `.env.example`: Document `SUBTITLE_ENABLED`, `SUBTITLE_LANG`, `SUBTITLE_SOURCE`, `SUBTITLE_MAX_RESULTS`, `SUBTITLE_PROXY`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 Run: `npm test tests/subtitles/config.test.ts`
 Expected: PASS
 
@@ -590,7 +590,7 @@ Expected: PASS
 - Test: `tests/subtitles/e2e.test.ts`
 - Verify: `package.json`, `dist/`, `pack.ps1`
 
-- [ ] **Step 1: Write end-to-end integration test in `tests/subtitles/e2e.test.ts`**
+- [x] **Step 1: Write end-to-end integration test in `tests/subtitles/e2e.test.ts`**
 ```typescript
 import { describe, it, expect } from 'vitest';
 import request from 'supertest';
@@ -619,15 +619,15 @@ describe('End-to-End Subtitle Flow', () => {
 });
 ```
 
-- [ ] **Step 2: Run all tests in repository**
+- [x] **Step 2: Run all tests in repository**
 Run: `npm test`
 Expected: ALL test suites PASS
 
-- [ ] **Step 3: Run TypeScript production build**
+- [x] **Step 3: Run TypeScript production build**
 Run: `npm run build`
 Expected: `tsc` completes with 0 errors, `dist/` generated successfully
 
-- [ ] **Step 4: Verify package preparation**
+- [x] **Step 4: Verify package preparation**
 Run: `powershell -File pack.ps1` (or verify that `pack.bat` and `pack.ps1` copy all required files into zip)
 Expected: `StremList-Windows-Debug.zip` built successfully containing all updated files
 

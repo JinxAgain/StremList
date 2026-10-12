@@ -15,6 +15,11 @@ export interface AppConfig {
   cometUrl: string;
   pollTimeout: number; // in seconds, default 25
   pollInterval: number; // in ms, default 1500
+  subtitleEnabled: boolean;
+  subtitleLang: 'bilingual' | 'chs' | 'cht';
+  subtitleSource: 'all' | 'subhd' | 'zimuku';
+  subtitleMaxResults: number;
+  subtitleProxy?: string;
 }
 
 const DEFAULT_CONFIG: AppConfig = {
@@ -25,7 +30,12 @@ const DEFAULT_CONFIG: AppConfig = {
   torrentioUrl: 'https://torrentio.strem.fun',
   cometUrl: 'https://comet.elfhosted.com',
   pollTimeout: 25,
-  pollInterval: 1500
+  pollInterval: 1500,
+  subtitleEnabled: true,
+  subtitleLang: 'bilingual',
+  subtitleSource: 'all',
+  subtitleMaxResults: 8,
+  subtitleProxy: ''
 };
 
 function cleanUrl(url?: string): string {
@@ -68,7 +78,12 @@ export function loadConfig(rawConfigStr?: string): AppConfig {
     torrentioUrl: cleanUrl(process.env.TORRENTIO_URL) || DEFAULT_CONFIG.torrentioUrl,
     cometUrl: cleanUrl(process.env.COMET_URL) || DEFAULT_CONFIG.cometUrl,
     pollTimeout: Number(process.env.POLL_TIMEOUT) || DEFAULT_CONFIG.pollTimeout,
-    pollInterval: Number(process.env.POLL_INTERVAL) || DEFAULT_CONFIG.pollInterval
+    pollInterval: Number(process.env.POLL_INTERVAL) || DEFAULT_CONFIG.pollInterval,
+    subtitleEnabled: process.env.SUBTITLE_ENABLED !== 'false',
+    subtitleLang: (process.env.SUBTITLE_LANG as 'bilingual' | 'chs' | 'cht') || DEFAULT_CONFIG.subtitleLang,
+    subtitleSource: (process.env.SUBTITLE_SOURCE as 'all' | 'subhd' | 'zimuku') || DEFAULT_CONFIG.subtitleSource,
+    subtitleMaxResults: Number(process.env.SUBTITLE_MAX_RESULTS) || DEFAULT_CONFIG.subtitleMaxResults,
+    subtitleProxy: process.env.SUBTITLE_PROXY?.trim() || DEFAULT_CONFIG.subtitleProxy
   };
 
   if (!rawConfigStr) {
@@ -110,7 +125,12 @@ export function loadConfig(rawConfigStr?: string): AppConfig {
       torrentioUrl: cleanUrl(parsed.torrentioUrl) || envConfig.torrentioUrl,
       cometUrl: cleanUrl(parsed.cometUrl) || envConfig.cometUrl,
       pollTimeout: Number(parsed.pollTimeout) || envConfig.pollTimeout,
-      pollInterval: Number(parsed.pollInterval) || envConfig.pollInterval
+      pollInterval: Number(parsed.pollInterval) || envConfig.pollInterval,
+      subtitleEnabled: parsed.subtitleEnabled !== undefined ? parsed.subtitleEnabled : envConfig.subtitleEnabled,
+      subtitleLang: parsed.subtitleLang || envConfig.subtitleLang,
+      subtitleSource: parsed.subtitleSource || envConfig.subtitleSource,
+      subtitleMaxResults: Number(parsed.subtitleMaxResults) || envConfig.subtitleMaxResults,
+      subtitleProxy: parsed.subtitleProxy !== undefined ? parsed.subtitleProxy : envConfig.subtitleProxy
     };
   } catch (error) {
     // If decoding or parsing fails, safely fallback to env config
@@ -127,6 +147,11 @@ export function encodeConfig(config: Partial<AppConfig>): string {
   if (config.cometUrl) cleanConfig.cometUrl = cleanUrl(config.cometUrl);
   if (config.pollTimeout) cleanConfig.pollTimeout = config.pollTimeout;
   if (config.pollInterval) cleanConfig.pollInterval = config.pollInterval;
+  if (config.subtitleEnabled !== undefined) cleanConfig.subtitleEnabled = config.subtitleEnabled;
+  if (config.subtitleLang) cleanConfig.subtitleLang = config.subtitleLang;
+  if (config.subtitleSource) cleanConfig.subtitleSource = config.subtitleSource;
+  if (config.subtitleMaxResults) cleanConfig.subtitleMaxResults = config.subtitleMaxResults;
+  if (config.subtitleProxy) cleanConfig.subtitleProxy = config.subtitleProxy.trim();
 
   return Buffer.from(JSON.stringify(cleanConfig)).toString('base64url');
 }

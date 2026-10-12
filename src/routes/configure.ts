@@ -44,6 +44,23 @@ export function handleConfigure(_req: Request, res: Response) {
       html = html.replace('value="https://comet.elfhosted.com"', `value="${config.cometUrl}"`);
     }
 
+    // Pre-populate subtitle configuration
+    if (!config.subtitleEnabled) {
+      html = html.replace('id="subtitleEnabled" checked', 'id="subtitleEnabled"');
+    }
+    if (config.subtitleLang) {
+      html = html.replace(`id="subtitleLang_${config.subtitleLang}"`, `id="subtitleLang_${config.subtitleLang}" selected`);
+    }
+    if (config.subtitleSource) {
+      html = html.replace(`id="subtitleSource_${config.subtitleSource}"`, `id="subtitleSource_${config.subtitleSource}" selected`);
+    }
+    if (config.subtitleMaxResults) {
+      html = html.replace(`id="subtitleMax_${config.subtitleMaxResults}"`, `id="subtitleMax_${config.subtitleMaxResults}" selected`);
+    }
+    if (config.subtitleProxy) {
+      html = html.replace('id="subtitleProxy"', `id="subtitleProxy" value="${config.subtitleProxy}"`);
+    }
+
     return res.send(html);
   } catch {
     return res.sendFile(htmlPath);
@@ -52,13 +69,31 @@ export function handleConfigure(_req: Request, res: Response) {
 
 export async function handleSaveConfig(req: Request, res: Response) {
   try {
-    const { openlistUrl, openlistToken, defaultDrive, torrentioUrl, cometUrl } = req.body || {};
+    const {
+      openlistUrl,
+      openlistToken,
+      defaultDrive,
+      torrentioUrl,
+      cometUrl,
+      subtitleEnabled,
+      subtitleLang,
+      subtitleSource,
+      subtitleMaxResults,
+      subtitleProxy
+    } = req.body || {};
+
     const updates: Record<string, string> = {};
     if (openlistUrl) updates['OPENLIST_URL'] = openlistUrl.trim().replace(/\/+$/, '');
     if (openlistToken !== undefined) updates['OPENLIST_TOKEN'] = openlistToken.trim();
     if (defaultDrive) updates['DEFAULT_DRIVE'] = defaultDrive.toLowerCase() === 'pikpak' ? 'pikpak' : '115';
     if (torrentioUrl) updates['TORRENTIO_URL'] = torrentioUrl.trim();
     if (cometUrl) updates['COMET_URL'] = cometUrl.trim();
+
+    if (subtitleEnabled !== undefined) updates['SUBTITLE_ENABLED'] = String(subtitleEnabled);
+    if (subtitleLang) updates['SUBTITLE_LANG'] = String(subtitleLang);
+    if (subtitleSource) updates['SUBTITLE_SOURCE'] = String(subtitleSource);
+    if (subtitleMaxResults !== undefined) updates['SUBTITLE_MAX_RESULTS'] = String(subtitleMaxResults);
+    if (subtitleProxy !== undefined) updates['SUBTITLE_PROXY'] = String(subtitleProxy).trim();
 
     saveConfigToEnv(updates);
     return res.json({ success: true, message: 'Configuration saved successfully to .env' });

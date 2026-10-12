@@ -1,9 +1,25 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
+import { saveConfigToEnv } from '../src/config.js';
 
 describe('HTTP Routes & Stremio Addon Protocol', () => {
   const app = createApp();
+
+  afterAll(() => {
+    delete process.env.SUBTITLE_ENABLED;
+    delete process.env.SUBTITLE_LANG;
+    delete process.env.SUBTITLE_SOURCE;
+    delete process.env.SUBTITLE_MAX_RESULTS;
+    delete process.env.SUBTITLE_PROXY;
+    saveConfigToEnv({
+      SUBTITLE_ENABLED: 'true',
+      SUBTITLE_LANG: 'bilingual',
+      SUBTITLE_SOURCE: 'all',
+      SUBTITLE_MAX_RESULTS: '8',
+      SUBTITLE_PROXY: ''
+    });
+  });
 
   it('GET /manifest.json returns valid Stremio Addon manifest', async () => {
     const res = await request(app).get('/manifest.json');
@@ -40,5 +56,24 @@ describe('HTTP Routes & Stremio Addon Protocol', () => {
     expect(res.body.success).toBe(true);
     expect(process.env.OPENLIST_TOKEN).toBe('saved-token-123');
     expect(process.env.DEFAULT_DRIVE).toBe('115');
+  });
+
+  it('POST /api/config/save updates subtitle configuration', async () => {
+    const res = await request(app)
+      .post('/api/config/save')
+      .send({
+        subtitleEnabled: false,
+        subtitleLang: 'chs',
+        subtitleSource: 'zimuku',
+        subtitleMaxResults: 5,
+        subtitleProxy: 'http://127.0.0.1:7890'
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(process.env.SUBTITLE_ENABLED).toBe('false');
+    expect(process.env.SUBTITLE_LANG).toBe('chs');
+    expect(process.env.SUBTITLE_SOURCE).toBe('zimuku');
+    expect(process.env.SUBTITLE_MAX_RESULTS).toBe('5');
+    expect(process.env.SUBTITLE_PROXY).toBe('http://127.0.0.1:7890');
   });
 });

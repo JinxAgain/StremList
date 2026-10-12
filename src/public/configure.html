@@ -266,6 +266,53 @@
         <input type="text" id="cometUrl" value="https://comet.elfhosted.com">
       </div>
 
+      <div style="margin-top: 24px; margin-bottom: 12px; border-top: 1px solid var(--border); padding-top: 18px;">
+        <h2 style="font-size: 16px; font-weight: 700; margin-bottom: 12px; color: var(--primary); display: flex; align-items: center; gap: 8px;">
+          <span>💬</span> 中文字幕设置 (Chinese Subtitles)
+        </h2>
+      </div>
+
+      <div class="form-group" style="display: flex; align-items: center; justify-content: space-between; padding: 12px; background: rgba(15, 23, 42, 0.4); border-radius: 10px; border: 1px solid var(--border);">
+        <div>
+          <label for="subtitleEnabled" style="margin-bottom: 0; cursor: pointer;">启用中文字幕插件 (Enable Subtitles)</label>
+          <div class="help-text">自动聚合 SubHD 与 字幕库 中文字幕</div>
+        </div>
+        <input type="checkbox" id="subtitleEnabled" checked style="width: 20px; height: 20px; cursor: pointer; accent-color: var(--primary);">
+      </div>
+
+      <div class="form-group">
+        <label for="subtitleLang">默认字幕语言 (Preferred Language)</label>
+        <select id="subtitleLang">
+          <option id="subtitleLang_bilingual" value="bilingual">双语优先 (Bilingual First)</option>
+          <option id="subtitleLang_chs" value="chs">简体中文优先 (Simplified Chinese)</option>
+          <option id="subtitleLang_cht" value="cht">繁体中文优先 (Traditional Chinese)</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="subtitleSource">字幕来源 (Subtitle Providers)</label>
+        <select id="subtitleSource">
+          <option id="subtitleSource_all" value="all">聚合 (SubHD + 字幕库)</option>
+          <option id="subtitleSource_subhd" value="subhd">仅 SubHD</option>
+          <option id="subtitleSource_zimuku" value="zimuku">仅 字幕库 (Zimuku)</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="subtitleMaxResults">最大显示条数 (Max Results)</label>
+        <select id="subtitleMaxResults">
+          <option id="subtitleMax_5" value="5">5 条</option>
+          <option id="subtitleMax_8" value="8">8 条 (推荐)</option>
+          <option id="subtitleMax_10" value="10">10 条</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="subtitleProxy">字幕网络代理 (HTTP/HTTPS Proxy, 可选)</label>
+        <input type="text" id="subtitleProxy" placeholder="例如: http://127.0.0.1:7890 (留空为直连)">
+        <div class="help-text">若国内访问 SubHD / 字幕库不稳定可填写本地代理</div>
+      </div>
+
       <div class="actions">
         <button type="button" class="btn-primary" id="installBtn">⚡ 安装到 Stremio (一次安装，永久生效)</button>
         <button type="button" class="btn-secondary" id="copyBtn">📋 复制 Stremio 插件链接</button>
@@ -290,7 +337,12 @@
         openlistToken: document.getElementById('openlistToken').value.trim(),
         defaultDrive: document.getElementById('defaultDrive').value,
         torrentioUrl: document.getElementById('torrentioUrl').value.trim(),
-        cometUrl: document.getElementById('cometUrl').value.trim()
+        cometUrl: document.getElementById('cometUrl').value.trim(),
+        subtitleEnabled: document.getElementById('subtitleEnabled') ? document.getElementById('subtitleEnabled').checked : true,
+        subtitleLang: document.getElementById('subtitleLang') ? document.getElementById('subtitleLang').value : 'bilingual',
+        subtitleSource: document.getElementById('subtitleSource') ? document.getElementById('subtitleSource').value : 'all',
+        subtitleMaxResults: document.getElementById('subtitleMaxResults') ? parseInt(document.getElementById('subtitleMaxResults').value, 10) : 8,
+        subtitleProxy: document.getElementById('subtitleProxy') ? document.getElementById('subtitleProxy').value.trim() : ''
       };
 
       try {
