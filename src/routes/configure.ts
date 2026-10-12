@@ -10,9 +10,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 function getConfigureHtmlPath(): string {
   const candidates = [
+    path.resolve(process.cwd(), 'src/public/configure.html'),
     path.resolve(__dirname, '../public/configure.html'),
     path.resolve(__dirname, '../../src/public/configure.html'),
-    path.resolve(process.cwd(), 'src/public/configure.html'),
     path.resolve(process.cwd(), 'dist/public/configure.html')
   ];
   for (const p of candidates) {

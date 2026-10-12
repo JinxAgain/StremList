@@ -72,9 +72,11 @@ foreach ($conn in $connections) {
     }
 }
 
-# 5. Build if dist/index.js is missing
+# 5. Build if dist/index.js is missing or src has been modified
 $distFile = Join-Path $PSScriptRoot "dist\index.js"
-if (-not (Test-Path $distFile)) {
+$srcIndex = Join-Path $PSScriptRoot "src\index.ts"
+$needsBuild = (-not (Test-Path $distFile)) -or ((Get-Item $srcIndex).LastWriteTime -gt (Get-Item $distFile).LastWriteTime)
+if ($needsBuild) {
     & npm run build
 }
 
