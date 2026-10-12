@@ -183,6 +183,14 @@
     .btn-secondary:hover {
       background: rgba(51, 65, 85, 0.8);
     }
+    .btn-success {
+      background: rgba(16, 185, 129, 0.2);
+      border: 1px solid #10b981;
+      color: #6ee7b7;
+    }
+    .btn-success:hover {
+      background: rgba(16, 185, 129, 0.35);
+    }
     .link-box {
       margin-top: 16px;
       padding: 12px;
@@ -204,6 +212,12 @@
     </div>
 
     <form id="configForm">
+      <div style="margin-bottom: 20px; padding: 12px 14px; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 10px; font-size: 13px; line-height: 1.6; color: #a7f3d0;">
+        ✨ <strong>开机自愈与零维护设计：</strong><br>
+        • Stremio <strong>只需安装一次</strong>本插件！安装链接使用标准服务地址（<code>http://127.0.0.1:7000/manifest.json</code>）。<br>
+        • 电脑重启或 48 小时 Token 到期后，后台会自动静默续期并刷新本地 <code>.env</code>，<strong>无需重复登录，更无需在 Stremio 中重新安装插件</strong>！
+      </div>
+
       <div class="form-group">
         <label for="openlistUrl">OpenList Server URL</label>
         <input type="text" id="openlistUrl" placeholder="http://127.0.0.1:5244" value="http://127.0.0.1:5244" required>
@@ -253,8 +267,9 @@
       </div>
 
       <div class="actions">
-        <button type="button" class="btn-primary" id="installBtn">⚡ Install Addon in Stremio</button>
-        <button type="button" class="btn-secondary" id="copyBtn">📋 Copy Manifest URL</button>
+        <button type="button" class="btn-primary" id="installBtn">⚡ 安装到 Stremio (一次安装，永久生效)</button>
+        <button type="button" class="btn-secondary" id="copyBtn">📋 复制 Stremio 插件链接</button>
+        <button type="button" class="btn-success" id="saveBtn">💾 保存当前设置到本地 (.env)</button>
       </div>
 
       <div class="link-box" id="linkBox"></div>
@@ -267,6 +282,34 @@
       badge.className = 'status-badge status-' + type;
       badge.textContent = msg;
       badge.style.display = 'block';
+    }
+
+    async function saveCurrentConfig(showToast = true) {
+      const payload = {
+        openlistUrl: document.getElementById('openlistUrl').value.trim(),
+        openlistToken: document.getElementById('openlistToken').value.trim(),
+        defaultDrive: document.getElementById('defaultDrive').value,
+        torrentioUrl: document.getElementById('torrentioUrl').value.trim(),
+        cometUrl: document.getElementById('cometUrl').value.trim()
+      };
+
+      try {
+        const res = await fetch('/api/config/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (showToast) {
+          if (data.success) {
+            alert('✅ 配置已成功保存至本地 .env 文件！');
+          } else {
+            alert('❌ 保存失败: ' + data.message);
+          }
+        }
+      } catch (e) {
+        if (showToast) alert('❌ 保存请求失败: ' + e.message);
+      }
     }
 
     async function testConnection() {
@@ -339,7 +382,8 @@
         if (data.success && data.token) {
           document.getElementById('openlistToken').value = data.token;
           document.getElementById('loginBox').style.display = 'none';
-          showStatus('success', '✅ 登录成功！已自动获取并填入 Token，配置文件已同步更新。');
+          const permText = data.isPermanent ? '已成功绑定 OpenList 永久 API 令牌' : '已自动获取 Token 并启用后台免登自动保活续期';
+          showStatus('success', `✅ 登录成功！${permText}，已保存至本地配置。`);
           // Re-test to fetch available drives
           testConnection();
         } else {
@@ -350,42 +394,28 @@
       }
     });
 
-    function base64urlEncode(str) {
-      return btoa(unescape(encodeURIComponent(str)))
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/, '');
-    }
+    document.getElementById('saveBtn').addEventListener('click', () => {
+      saveCurrentConfig(true);
+    });
 
-    function buildManifestUrl() {
-      const config = {
-        openlistUrl: document.getElementById('openlistUrl').value.trim(),
-        openlistToken: document.getElementById('openlistToken').value.trim(),
-        defaultDrive: document.getElementById('defaultDrive').value,
-        torrentioUrl: document.getElementById('torrentioUrl').value.trim(),
-        cometUrl: document.getElementById('cometUrl').value.trim()
-      };
-
-      const encoded = base64urlEncode(JSON.stringify(config));
+    document.getElementById('installBtn').addEventListener('click', async () => {
+      await saveCurrentConfig(false);
       const host = window.location.host;
-      const protocol = window.location.protocol;
-      return `${protocol}//${host}/${encoded}/manifest.json`;
-    }
-
-    document.getElementById('installBtn').addEventListener('click', () => {
-      const url = buildManifestUrl();
-      const stremioUrl = url.replace(/^https?:/, 'stremio:');
+      const stremioUrl = `stremio://${host}/manifest.json`;
       window.location.href = stremioUrl;
     });
 
     document.getElementById('copyBtn').addEventListener('click', async () => {
-      const url = buildManifestUrl();
+      await saveCurrentConfig(false);
+      const host = window.location.host;
+      const protocol = window.location.protocol;
+      const url = `${protocol}//${host}/manifest.json`;
       const linkBox = document.getElementById('linkBox');
       linkBox.style.display = 'block';
-      linkBox.textContent = url;
+      linkBox.innerHTML = `<strong>插件安装链接 (已复制):</strong><br>${url}`;
       try {
         await navigator.clipboard.writeText(url);
-        alert('Manifest link copied to clipboard!');
+        alert('✅ 插件链接已复制！在 Stremio 中粘贴安装一次即可永久生效。');
       } catch (err) {}
     });
 

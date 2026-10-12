@@ -16,6 +16,7 @@ pnpm-debug.log*
 .bin/
 *.zip
 _pack_temp/
+data/
 
 # OS & Editor
 .DS_Store

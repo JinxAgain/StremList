@@ -3,7 +3,7 @@ import cors from 'cors';
 import { handleManifest } from './routes/manifest.js';
 import { handleStream } from './routes/stream.js';
 import { handlePlay } from './routes/play.js';
-import { handleConfigure, handleOpenListLogin, handleOpenListTest } from './routes/configure.js';
+import { handleConfigure, handleOpenListLogin, handleOpenListTest, handleSaveConfig } from './routes/configure.js';
 
 export function createApp(): Express {
   const app = express();
@@ -31,6 +31,7 @@ export function createApp(): Express {
     res.redirect('/configure');
   });
   app.get('/configure', handleConfigure);
+  app.post('/api/config/save', handleSaveConfig);
   app.post('/api/openlist/login', handleOpenListLogin);
   app.post('/api/openlist/test', handleOpenListTest);
 

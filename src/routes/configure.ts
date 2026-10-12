@@ -3,7 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import axios from 'axios';
-import { loadConfig } from '../config.js';
+import { loadConfig, saveConfigToEnv } from '../config.js';
 import { OpenListClient } from '../services/openlist/client.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -50,6 +50,23 @@ export function handleConfigure(_req: Request, res: Response) {
   }
 }
 
+export async function handleSaveConfig(req: Request, res: Response) {
+  try {
+    const { openlistUrl, openlistToken, defaultDrive, torrentioUrl, cometUrl } = req.body || {};
+    const updates: Record<string, string> = {};
+    if (openlistUrl) updates['OPENLIST_URL'] = openlistUrl.trim().replace(/\/+$/, '');
+    if (openlistToken !== undefined) updates['OPENLIST_TOKEN'] = openlistToken.trim();
+    if (defaultDrive) updates['DEFAULT_DRIVE'] = defaultDrive.toLowerCase() === 'pikpak' ? 'pikpak' : '115';
+    if (torrentioUrl) updates['TORRENTIO_URL'] = torrentioUrl.trim();
+    if (cometUrl) updates['COMET_URL'] = cometUrl.trim();
+
+    saveConfigToEnv(updates);
+    return res.json({ success: true, message: 'Configuration saved successfully to .env' });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}
+
 export async function handleOpenListLogin(req: Request, res: Response) {
   try {
     const { url, username, password } = req.body;
@@ -63,28 +80,41 @@ export async function handleOpenListLogin(req: Request, res: Response) {
     }, { timeout: 8000 });
 
     if (loginRes.data && loginRes.data.code === 200 && loginRes.data.data?.token) {
-      const token = loginRes.data.data.token;
+      const sessionToken = loginRes.data.data.token;
+      let effectiveToken = sessionToken;
+      let isPermanent = false;
+
+      // Try discovering permanent API token from OpenList admin settings
       try {
-        const envPath = path.resolve(process.cwd(), '.env');
-        if (fs.existsSync(envPath)) {
-          let envContent = fs.readFileSync(envPath, 'utf-8');
-          if (envContent.includes('OPENLIST_TOKEN=')) {
-            envContent = envContent.replace(/OPENLIST_TOKEN=.*/, `OPENLIST_TOKEN=${token}`);
-          } else {
-            envContent += `\nOPENLIST_TOKEN=${token}`;
+        const settingRes = await axios.get(`${cleanUrl}/api/admin/setting/get?key=token`, {
+          headers: { Authorization: sessionToken },
+          timeout: 3000
+        });
+        if (settingRes.data?.code === 200 && settingRes.data?.data?.value) {
+          const permVal = String(settingRes.data.data.value).trim();
+          if (permVal.length > 0) {
+            effectiveToken = permVal;
+            isPermanent = true;
+            console.log(`[OpenList] 🔑 Discovered permanent API token (${effectiveToken.slice(0, 10)}...) from OpenList admin settings!`);
           }
-          fs.writeFileSync(envPath, envContent, 'utf-8');
-          process.env.OPENLIST_TOKEN = token;
         }
       } catch {}
 
+      // Persist credentials and token to .env for zero-maintenance auto-refresh
+      saveConfigToEnv({
+        OPENLIST_URL: cleanUrl,
+        OPENLIST_TOKEN: effectiveToken,
+        OPENLIST_USERNAME: username,
+        OPENLIST_PASSWORD: password
+      });
+
       // Automatically ensure 115 Web Proxy is enabled for smooth playback
       try {
-        const client = new OpenListClient(cleanUrl, token);
+        const client = new OpenListClient(cleanUrl, effectiveToken);
         await client.ensure115WebProxy();
       } catch {}
 
-      return res.json({ success: true, token });
+      return res.json({ success: true, token: effectiveToken, isPermanent });
     }
 
     return res.json({

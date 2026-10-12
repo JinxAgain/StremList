@@ -28,9 +28,17 @@ describe('HTTP Routes & Stremio Addon Protocol', () => {
     expect(res.text).toContain('OpenList');
   });
 
-  it('GET /health returns OK status', async () => {
-    const res = await request(app).get('/health');
+  it('POST /api/config/save updates and persists configuration', async () => {
+    const res = await request(app)
+      .post('/api/config/save')
+      .send({
+        openlistUrl: 'http://127.0.0.1:5244',
+        openlistToken: 'saved-token-123',
+        defaultDrive: '115'
+      });
     expect(res.status).toBe(200);
-    expect(res.body.status).toBe('ok');
+    expect(res.body.success).toBe(true);
+    expect(process.env.OPENLIST_TOKEN).toBe('saved-token-123');
+    expect(process.env.DEFAULT_DRIVE).toBe('115');
   });
 });

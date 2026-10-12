@@ -1,3 +1,5 @@
+import path from 'path';
+import fs from 'fs';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -6,6 +8,8 @@ export interface AppConfig {
   port: number;
   openlistUrl: string;
   openlistToken: string;
+  openlistUsername?: string;
+  openlistPassword?: string;
   defaultDrive: '115' | 'pikpak';
   torrentioUrl: string;
   cometUrl: string;
@@ -29,6 +33,27 @@ function cleanUrl(url?: string): string {
   return url.trim().replace(/\/+$/, '');
 }
 
+export function saveConfigToEnv(updates: Record<string, string | number | undefined>): void {
+  try {
+    const envPath = path.resolve(process.cwd(), '.env');
+    let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '';
+    for (const [key, val] of Object.entries(updates)) {
+      if (val === undefined) continue;
+      const strVal = String(val);
+      process.env[key] = strVal;
+      const regex = new RegExp(`^${key}=.*$`, 'm');
+      if (regex.test(envContent)) {
+        envContent = envContent.replace(regex, `${key}=${strVal}`);
+      } else {
+        envContent += `\n${key}=${strVal}`;
+      }
+    }
+    fs.writeFileSync(envPath, envContent.trim() + '\n', 'utf-8');
+  } catch (err) {
+    console.error('[Config] Failed to persist config to .env:', err);
+  }
+}
+
 export function loadConfig(rawConfigStr?: string): AppConfig {
   const rawEnvToken = process.env.OPENLIST_TOKEN?.trim() || '';
   const sanitizedEnvToken = rawEnvToken === 'your_openlist_token_here' ? '' : rawEnvToken;
@@ -37,6 +62,8 @@ export function loadConfig(rawConfigStr?: string): AppConfig {
     port: Number(process.env.PORT) || DEFAULT_CONFIG.port,
     openlistUrl: cleanUrl(process.env.OPENLIST_URL) || DEFAULT_CONFIG.openlistUrl,
     openlistToken: sanitizedEnvToken || DEFAULT_CONFIG.openlistToken,
+    openlistUsername: process.env.OPENLIST_USERNAME?.trim() || '',
+    openlistPassword: process.env.OPENLIST_PASSWORD || '',
     defaultDrive: (process.env.DEFAULT_DRIVE?.toLowerCase() === 'pikpak' ? 'pikpak' : '115') as '115' | 'pikpak',
     torrentioUrl: cleanUrl(process.env.TORRENTIO_URL) || DEFAULT_CONFIG.torrentioUrl,
     cometUrl: cleanUrl(process.env.COMET_URL) || DEFAULT_CONFIG.cometUrl,
@@ -77,6 +104,8 @@ export function loadConfig(rawConfigStr?: string): AppConfig {
       port: parsed.port || envConfig.port,
       openlistUrl: cleanUrl(parsed.openlistUrl) || envConfig.openlistUrl,
       openlistToken: effectiveToken,
+      openlistUsername: envConfig.openlistUsername,
+      openlistPassword: envConfig.openlistPassword,
       defaultDrive: parsed.defaultDrive?.toLowerCase() === 'pikpak' ? 'pikpak' : (parsed.defaultDrive ? '115' : envConfig.defaultDrive),
       torrentioUrl: cleanUrl(parsed.torrentioUrl) || envConfig.torrentioUrl,
       cometUrl: cleanUrl(parsed.cometUrl) || envConfig.cometUrl,

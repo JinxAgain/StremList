@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 import { FileItem } from '../matcher/file-matcher.js';
 import { OpenListApiResponse, OpenListListData, OpenListGetData } from '../../types/openlist.js';
+import { saveConfigToEnv } from '../../config.js';
 
 export function normalizeToolName(drive: string): string {
   const lower = drive.toLowerCase();
@@ -23,6 +24,7 @@ export function getToolCandidates(drive: string): string[] {
 
 export class OpenListClient {
   private http: AxiosInstance;
+  private proxyChecked = false;
 
   constructor(private baseUrl: string, private token: string) {
     const cleanBase = baseUrl.replace(/\/+$/, '');
@@ -36,29 +38,92 @@ export class OpenListClient {
     });
   }
 
-  private async request<T = any>(endpoint: string, data: any): Promise<OpenListApiResponse<T> | null> {
-    try {
-      const response = await this.http.post<OpenListApiResponse<T>>(endpoint, data);
+  async refreshToken(): Promise<string | null> {
+    const username = process.env.OPENLIST_USERNAME;
+    const password = process.env.OPENLIST_PASSWORD;
+    if (!username || !password) return null;
 
-      if (response.data?.code === 401 && process.env.OPENLIST_TOKEN && process.env.OPENLIST_TOKEN.trim() !== this.token) {
-        console.warn(`[OpenList] ⚠️ Received 401 from ${endpoint}: ${response.data?.message}. Retrying with server permanent token from .env...`);
-        this.token = process.env.OPENLIST_TOKEN.trim();
-        this.http.defaults.headers['Authorization'] = this.token;
-        const retryRes = await this.http.post<OpenListApiResponse<T>>(endpoint, data);
-        return retryRes.data;
+    try {
+      console.log(`[OpenList] 🔄 Session token expired (401). Auto-refreshing in background using saved credentials...`);
+      const cleanBase = this.baseUrl.replace(/\/+$/, '');
+      const res = await axios.post(`${cleanBase}/api/auth/login`, {
+        username,
+        password
+      }, { timeout: 8000 });
+
+      if (res.data?.code === 200 && res.data.data?.token) {
+        let newToken = res.data.data.token;
+        try {
+          const settingRes = await axios.get(`${cleanBase}/api/admin/setting/get?key=token`, {
+            headers: { Authorization: newToken },
+            timeout: 3000
+          });
+          if (settingRes.data?.code === 200 && settingRes.data?.data?.value) {
+            newToken = settingRes.data.data.value.trim();
+          }
+        } catch {}
+
+        this.token = newToken;
+        this.http.defaults.headers['Authorization'] = newToken;
+        saveConfigToEnv({ OPENLIST_TOKEN: newToken });
+        console.log(`[OpenList] ✅ Token auto-refreshed successfully and saved to .env!`);
+        return newToken;
+      }
+    } catch (err: any) {
+      console.error(`[OpenList] ❌ Failed to auto-refresh token: ${err.message}`);
+    }
+    return null;
+  }
+
+  private async request<T = any>(endpoint: string, data: any): Promise<OpenListApiResponse<T> | null> {
+    const execute = async () => {
+      return await this.http.post<OpenListApiResponse<T>>(endpoint, data);
+    };
+
+    try {
+      const response = await execute();
+
+      if (response.data?.code === 401) {
+        // Try fallback to server token if different
+        if (process.env.OPENLIST_TOKEN && process.env.OPENLIST_TOKEN.trim() !== this.token) {
+          console.warn(`[OpenList] ⚠️ Received 401 from ${endpoint}. Retrying with server token from .env...`);
+          this.token = process.env.OPENLIST_TOKEN.trim();
+          this.http.defaults.headers['Authorization'] = this.token;
+          const retryRes = await execute();
+          if (retryRes.data?.code !== 401) return retryRes.data;
+        }
+
+        // Try background auto-refresh
+        const refreshedToken = await this.refreshToken();
+        if (refreshedToken) {
+          const retryRes = await execute();
+          return retryRes.data;
+        }
       }
 
       return response.data;
     } catch (error: any) {
-      if (error.response?.data?.code === 401 && process.env.OPENLIST_TOKEN && process.env.OPENLIST_TOKEN.trim() !== this.token) {
-        console.warn(`[OpenList] ⚠️ HTTP 401 on ${endpoint}. Retrying with server permanent token from .env...`);
-        this.token = process.env.OPENLIST_TOKEN.trim();
-        this.http.defaults.headers['Authorization'] = this.token;
-        try {
-          const retryRes = await this.http.post<OpenListApiResponse<T>>(endpoint, data);
-          return retryRes.data;
-        } catch {}
+      const is401 = error.response?.status === 401 || error.response?.data?.code === 401;
+      if (is401) {
+        if (process.env.OPENLIST_TOKEN && process.env.OPENLIST_TOKEN.trim() !== this.token) {
+          console.warn(`[OpenList] ⚠️ HTTP 401 on ${endpoint}. Retrying with server token from .env...`);
+          this.token = process.env.OPENLIST_TOKEN.trim();
+          this.http.defaults.headers['Authorization'] = this.token;
+          try {
+            const retryRes = await execute();
+            if (retryRes.data?.code !== 401) return retryRes.data;
+          } catch {}
+        }
+
+        const refreshedToken = await this.refreshToken();
+        if (refreshedToken) {
+          try {
+            const retryRes = await execute();
+            return retryRes.data;
+          } catch {}
+        }
       }
+
       const msg = error.response?.data?.message || error.message;
       console.log(`[OpenList] Request to ${endpoint} error: ${msg}`);
       return null;
@@ -115,8 +180,6 @@ export class OpenListClient {
 
     return false;
   }
-
-  private proxyChecked = false;
 
   async ensure115WebProxy(): Promise<boolean> {
     if (this.proxyChecked) return true;

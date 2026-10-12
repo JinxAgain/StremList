@@ -166,4 +166,28 @@ describe('OpenList Client & Playback Resolver', () => {
     const url = await client.getRawUrl('/PikPak/StremList/hash/movie.mkv');
     expect(url).toBe('http://127.0.0.1:5244/d/PikPak/StremList/hash/movie.mkv?sign=mocksig456');
   });
+
+  it('automatically attempts token refresh when receiving 401 from OpenList', async () => {
+    const client = new OpenListClient('http://127.0.0.1:5244', 'expired-token');
+    const refreshSpy = vi.spyOn(client, 'refreshToken').mockResolvedValue('refreshed-new-token');
+
+    let callCount = 0;
+    vi.spyOn((client as any).http, 'post').mockImplementation(async () => {
+      callCount++;
+      if (callCount <= 2) {
+        return { data: { code: 401, message: 'token is expired' } };
+      }
+      return {
+        data: {
+          code: 200,
+          data: { content: [{ name: 'test.mkv', size: 1000, is_dir: false }] }
+        }
+      };
+    });
+
+    const res = await client.list('/115');
+    expect(refreshSpy).toHaveBeenCalled();
+    expect(res.content?.length).toBe(1);
+    expect(res.content?.[0].name).toBe('test.mkv');
+  });
 });
