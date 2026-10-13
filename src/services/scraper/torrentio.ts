@@ -16,7 +16,11 @@ export function extractInfoHash(stream: StremioStream): string | null {
 }
 
 export class TorrentioScraper {
-  constructor(private baseUrl: string) {}
+  private baseUrl: string;
+
+  constructor(baseUrl: string) {
+    this.baseUrl = baseUrl ? baseUrl.trim().replace(/\/+$/, '').replace(/\/manifest\.json$/i, '').replace(/\/+$/, '') : '';
+  }
 
   async fetchStreams(type: string, id: string): Promise<ScrapedStream[]> {
     if (!this.baseUrl) return [];

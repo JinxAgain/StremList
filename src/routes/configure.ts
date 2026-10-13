@@ -86,8 +86,8 @@ export async function handleSaveConfig(req: Request, res: Response) {
     if (openlistUrl) updates['OPENLIST_URL'] = openlistUrl.trim().replace(/\/+$/, '');
     if (openlistToken !== undefined) updates['OPENLIST_TOKEN'] = openlistToken.trim();
     if (defaultDrive) updates['DEFAULT_DRIVE'] = defaultDrive.toLowerCase() === 'pikpak' ? 'pikpak' : '115';
-    if (torrentioUrl !== undefined) updates['TORRENTIO_URL'] = torrentioUrl.trim();
-    if (cometUrl !== undefined) updates['COMET_URL'] = cometUrl.trim();
+    if (torrentioUrl !== undefined) updates['TORRENTIO_URL'] = torrentioUrl.trim().replace(/\/+$/, '').replace(/\/manifest\.json$/i, '').replace(/\/+$/, '');
+    if (cometUrl !== undefined) updates['COMET_URL'] = cometUrl.trim().replace(/\/+$/, '').replace(/\/manifest\.json$/i, '').replace(/\/+$/, '');
 
     if (subtitleEnabled !== undefined) updates['SUBTITLE_ENABLED'] = String(subtitleEnabled);
     if (subtitleLang) updates['SUBTITLE_LANG'] = String(subtitleLang);

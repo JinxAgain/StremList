@@ -40,7 +40,7 @@ const DEFAULT_CONFIG: AppConfig = {
 
 function cleanUrl(url?: string): string {
   if (!url) return '';
-  return url.trim().replace(/\/+$/, '');
+  return url.trim().replace(/\/+$/, '').replace(/\/manifest\.json$/i, '').replace(/\/+$/, '');
 }
 
 export function saveConfigToEnv(updates: Record<string, string | number | undefined>): void {

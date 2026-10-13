@@ -4,7 +4,11 @@ import { ScrapedStream } from '../../types/scraper.js';
 import { extractInfoHash } from './torrentio.js';
 
 export class CometScraper {
-  constructor(private baseUrl: string) {}
+  private baseUrl: string;
+
+  constructor(baseUrl: string) {
+    this.baseUrl = baseUrl ? baseUrl.trim().replace(/\/+$/, '').replace(/\/manifest\.json$/i, '').replace(/\/+$/, '') : '';
+  }
 
   async fetchStreams(type: string, id: string): Promise<ScrapedStream[]> {
     if (!this.baseUrl) return [];
