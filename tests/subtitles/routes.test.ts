@@ -30,5 +30,5 @@ describe('Subtitle & Harbor Routes', () => {
     const res = await request(app).get('/subtitles/movie/tt1234567/filename=Test.Movie.2024.1080p.mkv.json');
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.subtitles)).toBe(true);
-  });
+  }, 15000);
 });

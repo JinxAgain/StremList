@@ -24,9 +24,6 @@ function safeDecodeURIComponent(str: string): string {
 }
 
 function getPublicBaseUrl(req: Request): string {
-  if (process.env.PUBLIC_URL) {
-    return process.env.PUBLIC_URL.replace(/\/+$/, '');
-  }
   const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
   const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || `127.0.0.1:7000`;
   return `${proto}://${host}`.replace(/\/+$/, '');
