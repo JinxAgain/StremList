@@ -25,6 +25,8 @@ export function getToolCandidates(drive: string): string[] {
 export class OpenListClient {
   private http: AxiosInstance;
   private proxyChecked = false;
+  private mountedDrivesCache: { drives: string[]; expiresAt: number } | null = null;
+  private cachedHashesCache: { hashes: Set<string>; expiresAt: number } | null = null;
 
   constructor(private baseUrl: string, private token: string) {
     const cleanBase = baseUrl.replace(/\/+$/, '');
@@ -36,6 +38,88 @@ export class OpenListClient {
         ...(token ? { Authorization: token } : {})
       }
     });
+  }
+
+  async getMountedDrives(forceRefresh = false): Promise<string[]> {
+    const now = Date.now();
+    if (!forceRefresh && this.mountedDrivesCache && this.mountedDrivesCache.expiresAt > now) {
+      return this.mountedDrivesCache.drives;
+    }
+
+    const drives: string[] = [];
+
+    // 1. Try /api/admin/storage/list
+    try {
+      const res = await this.http.get('/api/admin/storage/list', { timeout: 4000 });
+      if (res.data?.code === 200 && Array.isArray(res.data.data?.content)) {
+        for (const storage of res.data.data.content) {
+          if (!storage.disabled && storage.mount_path) {
+            const clean = storage.mount_path.replace(/^\/+|\/+$/g, '');
+            if (clean && !drives.includes(clean)) {
+              drives.push(clean);
+            }
+          }
+        }
+      }
+    } catch {
+      // Non-admin token or admin endpoint inaccessible
+    }
+
+    // 2. Fallback to list('/') to get top-level mount folders
+    if (drives.length === 0) {
+      try {
+        const rootListing = await this.list('/', forceRefresh);
+        for (const item of rootListing.content || []) {
+          if (item.is_dir && item.name) {
+            const clean = item.name.replace(/^\/+|\/+$/g, '');
+            if (clean && !drives.includes(clean)) {
+              drives.push(clean);
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // 3. Fallback to DEFAULT_DRIVE from environment
+    if (drives.length === 0) {
+      const envDrive = normalizeToolName(process.env.DEFAULT_DRIVE || '115');
+      drives.push(envDrive);
+    }
+
+    this.mountedDrivesCache = { drives, expiresAt: now + 30000 };
+    return drives;
+  }
+
+  async getAllCachedHashes(forceRefresh = false): Promise<Set<string>> {
+    const now = Date.now();
+    if (!forceRefresh && this.cachedHashesCache && this.cachedHashesCache.expiresAt > now) {
+      return this.cachedHashesCache.hashes;
+    }
+
+    const hashes = new Set<string>();
+    const drives = await this.getMountedDrives(forceRefresh);
+
+    await Promise.allSettled(
+      drives.map(async (drive) => {
+        try {
+          const stremListDir = `/${drive}/StremList`;
+          const listing = await this.list(stremListDir, false);
+          for (const item of listing.content || []) {
+            if (item.is_dir && item.name) {
+              const lower = item.name.toLowerCase().trim();
+              if (/^[a-f0-9]{40}$/.test(lower)) {
+                hashes.add(lower);
+              }
+            }
+          }
+        } catch {
+          // Ignore per-drive listing failures
+        }
+      })
+    );
+
+    this.cachedHashesCache = { hashes, expiresAt: now + 20000 };
+    return hashes;
   }
 
   async refreshToken(): Promise<string | null> {

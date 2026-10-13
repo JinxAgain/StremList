@@ -22,6 +22,7 @@ export const MANIFEST: StremioManifest = {
   ],
   types: ['movie', 'series'],
   idPrefixes: ['tt', 'tmdb', 'kitsu'],
+  catalogs: [],
   behaviorHints: {
     configurable: true,
     configurationRequired: false

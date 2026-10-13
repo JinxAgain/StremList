@@ -22,7 +22,8 @@ export interface StremioManifest {
 
 export interface StremioStream {
   name: string;
-  title: string;
+  title?: string;
+  description?: string;
   url?: string;
   infoHash?: string;
   fileIdx?: number;
@@ -30,6 +31,9 @@ export interface StremioStream {
     notWebReady?: boolean;
     bingeGroup?: string;
     proxyHeaders?: Record<string, string>;
+    filename?: string;
+    videoSize?: number;
+    [key: string]: any;
   };
 }
 

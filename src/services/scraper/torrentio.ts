@@ -36,11 +36,16 @@ export class TorrentioScraper {
       for (const s of response.data.streams) {
         const hash = extractInfoHash(s);
         if (hash) {
+          const fullTitle = s.title || s.description || '';
+          const fullDesc = s.description || s.title || '';
           results.push({
             infoHash: hash,
             name: s.name || 'Torrentio',
-            title: s.title || '',
-            fileIdx: s.fileIdx
+            title: fullTitle,
+            description: fullDesc,
+            fileIdx: s.fileIdx,
+            sourceAddon: 'torrentio',
+            behaviorHints: s.behaviorHints
           });
         }
       }

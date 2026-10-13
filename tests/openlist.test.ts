@@ -35,6 +35,7 @@ describe('OpenList Client & Playback Resolver', () => {
 
   it('checks fallback drive if default drive has no cache', async () => {
     const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
+    vi.spyOn(client, 'getMountedDrives').mockResolvedValue(['115', 'PikPak']);
 
     vi.spyOn(client, 'list').mockImplementation(async (path: string) => {
       if (path.startsWith('/115/')) {
@@ -61,11 +62,12 @@ describe('OpenList Client & Playback Resolver', () => {
 
   it('triggers offline task and polls until video appears on cache miss', async () => {
     const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
+    vi.spyOn(client, 'getMountedDrives').mockResolvedValue(['115']);
 
     let pollCount = 0;
     vi.spyOn(client, 'list').mockImplementation(async () => {
       pollCount++;
-      if (pollCount < 3) {
+      if (pollCount < 4) {
         return { content: [] };
       }
       return {

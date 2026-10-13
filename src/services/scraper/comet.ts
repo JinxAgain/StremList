@@ -24,11 +24,20 @@ export class CometScraper {
       for (const s of response.data.streams) {
         const hash = extractInfoHash(s);
         if (hash) {
+          const rawName = s.name || 'Comet';
+          // Clean up upstream prefix like "[TORRENT🧲] " or "[RD⚡] " to get clean label
+          const cleanName = rawName.replace(/^\[[^\]]+\]\s*/, '').trim() || 'Comet';
+          const fullTitle = s.title || s.description || '';
+          const fullDesc = s.description || s.title || '';
+
           results.push({
             infoHash: hash,
-            name: s.name || 'Comet',
-            title: s.title || '',
-            fileIdx: s.fileIdx
+            name: cleanName,
+            title: fullTitle,
+            description: fullDesc,
+            fileIdx: s.fileIdx,
+            sourceAddon: 'comet',
+            behaviorHints: s.behaviorHints
           });
         }
       }

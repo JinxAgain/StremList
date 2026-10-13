@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../src/app.js';
+import { cacheManager } from '../../src/services/subtitles/cache/manager.js';
 
 describe('Subtitle & Harbor Routes', () => {
   const app = createApp();
@@ -27,8 +28,12 @@ describe('Subtitle & Harbor Routes', () => {
   });
 
   it('routes subtitle search requests with filename extra', async () => {
+    cacheManager.setSearchResults('movie:tt1234567:0:0:bilingual:all:8', [
+      { id: '1', lang: 'zh-CN', path: '/subtitles/dl/subhd/1/0/test.srt' }
+    ]);
     const res = await request(app).get('/subtitles/movie/tt1234567/filename=Test.Movie.2024.1080p.mkv.json');
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.subtitles)).toBe(true);
-  }, 15000);
+    expect(res.body.subtitles.length).toBeGreaterThan(0);
+  });
 });

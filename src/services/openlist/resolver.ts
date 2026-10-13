@@ -83,63 +83,65 @@ export class PlaybackResolver {
     target: MatchTarget,
     onAbort?: (abortHandler: () => void) => void
   ): Promise<string> {
-    const primaryDrive = this.config.defaultDrive;
-    const fallbackDrive = primaryDrive.toLowerCase() === '115' ? 'pikpak' : '115';
+    const mountedDrives = await this.client.getMountedDrives();
+    const primaryDrive = normalizeDriveName(this.config.defaultDrive || '115');
 
-    const primaryPath = this.getDrivePath(primaryDrive, infoHash);
-    const fallbackPath = this.getDrivePath(fallbackDrive, infoHash);
+    // Ensure primaryDrive is checked first, followed by all other mounted drives
+    const candidateDrives = [
+      primaryDrive,
+      ...mountedDrives.map(normalizeDriveName).filter((d) => d.toLowerCase() !== primaryDrive.toLowerCase())
+    ];
 
-    console.log(`[Resolver] 🔍 Checking cache for hash ${infoHash}...`);
-    console.log(`[Resolver]    Primary path:  ${primaryPath}`);
-    console.log(`[Resolver]    Fallback path: ${fallbackPath}`);
+    console.log(`[Resolver] 🔍 Checking cache for hash ${infoHash} across drives: [${candidateDrives.join(', ')}]...`);
 
-    // 1. Fast Cache Check: Primary Drive by hash
-    const primaryCached = await this.findPlayableInPath(primaryPath, target, false);
-    if (primaryCached) {
-      console.log(`[Resolver] ⚡ Cache HIT in primary drive! Found: ${primaryCached.file.name}`);
-      const rawUrl = await this.client.getRawUrl(primaryCached.fullPath);
-      if (rawUrl) {
-        console.log(`[Resolver] 🚀 Direct URL retrieved: ${rawUrl}`);
-        return rawUrl;
+    // 1. Fast Cache Check: Check /<Drive>/StremList/<hash> for each mounted drive
+    for (const drive of candidateDrives) {
+      const drivePath = this.getDrivePath(drive, infoHash);
+      const cached = await this.findPlayableInPath(drivePath, target, false);
+      if (cached) {
+        console.log(`[Resolver] ⚡ Cache HIT in drive "${drive}"! Found: ${cached.file.name}`);
+        const rawUrl = await this.client.getRawUrl(cached.fullPath);
+        if (rawUrl) {
+          console.log(`[Resolver] 🚀 Direct URL retrieved: ${rawUrl}`);
+          return rawUrl;
+        }
       }
     }
 
-    // 2. Fast Cache Check: Fallback Drive by hash
-    const fallbackCached = await this.findPlayableInPath(fallbackPath, target, false);
-    if (fallbackCached) {
-      console.log(`[Resolver] ⚡ Cache HIT in fallback drive! Found: ${fallbackCached.file.name}`);
-      const rawUrl = await this.client.getRawUrl(fallbackCached.fullPath);
-      if (rawUrl) {
-        console.log(`[Resolver] 🚀 Direct URL retrieved: ${rawUrl}`);
-        return rawUrl;
+    // 2. Smart Title Cache Check in /<Drive>/StremList/ and /<Drive>/ across all drives
+    if (target.title) {
+      for (const drive of candidateDrives) {
+        const parentDir = `/${drive}/StremList`;
+        const rootDir = `/${drive}`;
+
+        let titleCached = await this.findPlayableByTitleInDir(parentDir, target, false);
+        if (!titleCached) {
+          titleCached = await this.findPlayableByTitleInDir(rootDir, target, false);
+        }
+
+        if (titleCached) {
+          console.log(`[Resolver] ⚡ Cache HIT in drive "${drive}" by title match! Found: ${titleCached.file.name}`);
+          const rawUrl = await this.client.getRawUrl(titleCached.fullPath);
+          if (rawUrl) {
+            console.log(`[Resolver] 🚀 Direct URL retrieved: ${rawUrl}`);
+            return rawUrl;
+          }
+        }
       }
     }
 
-    // 3. Smart Title Cache Check in /<Drive>/StremList/ and /<Drive>/
-    const parentPrimary = `/${normalizeDriveName(primaryDrive)}/StremList`;
-    const rootDrive = `/${normalizeDriveName(primaryDrive)}`;
+    // 3. Cache Miss: Add Offline Task to DEFAULT_DRIVE (config.defaultDrive)
+    const targetDrive = primaryDrive;
+    const targetPath = this.getDrivePath(targetDrive, infoHash);
+    const parentPrimary = `/${targetDrive}/StremList`;
+    const rootDrive = `/${targetDrive}`;
 
-    let titleCached = await this.findPlayableByTitleInDir(parentPrimary, target, false);
-    if (!titleCached && target.title) {
-      titleCached = await this.findPlayableByTitleInDir(rootDrive, target, false);
-    }
-
-    if (titleCached) {
-      console.log(`[Resolver] ⚡ Cache HIT in directory by title match! Found: ${titleCached.file.name}`);
-      const rawUrl = await this.client.getRawUrl(titleCached.fullPath);
-      if (rawUrl) {
-        console.log(`[Resolver] 🚀 Direct URL retrieved: ${rawUrl}`);
-        return rawUrl;
-      }
-    }
-
-    // 4. Cache Miss: Add Offline Task to Primary Drive
-    console.log(`[Resolver] ⏳ Cache MISS in both drives. Starting offline download...`);
+    console.log(`[Resolver] ⏳ Cache MISS across all drives. Starting offline download on DEFAULT_DRIVE "${targetDrive}"...`);
     // Pre-create directory so cloud drive has dedicated target folder
     await this.client.mkdir(parentPrimary);
-    await this.client.mkdir(primaryPath);
+    await this.client.mkdir(targetPath);
     const magnetUrl = `magnet:?xt=urn:btih:${infoHash}`;
-    const taskAdded = await this.client.addOfflineDownload(primaryPath, [magnetUrl], primaryDrive);
+    const taskAdded = await this.client.addOfflineDownload(targetPath, [magnetUrl], targetDrive);
     if (!taskAdded) {
       console.warn(`[Resolver] ⚠️ Warning: addOfflineDownload API reported failure. Will still poll in case it queued.`);
     }
@@ -174,10 +176,10 @@ export class PlaybackResolver {
           return;
         }
 
-        console.log(`[Resolver] 🔄 Polling ${primaryPath} (attempt #${pollAttempts}, elapsed ${elapsedSec}s)...`);
+        console.log(`[Resolver] 🔄 Polling ${targetPath} (attempt #${pollAttempts}, elapsed ${elapsedSec}s)...`);
 
         try {
-          let readyFile = await this.findPlayableInPath(primaryPath, target, true);
+          let readyFile = await this.findPlayableInPath(targetPath, target, true);
           if (!readyFile && target.title) {
             readyFile = await this.findPlayableByTitleInDir(parentPrimary, target, true);
           }
