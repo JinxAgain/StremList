@@ -15,14 +15,25 @@ const zimukuProvider = new ZimukuProvider();
 
 export const subtitlesRouter = Router();
 
+function safeDecodeURIComponent(str: string): string {
+  try {
+    return decodeURIComponent(str);
+  } catch {
+    return str.replace(/%20/g, ' ');
+  }
+}
+
 function getPublicBaseUrl(req: Request): string {
+  if (process.env.PUBLIC_URL) {
+    return process.env.PUBLIC_URL.replace(/\/+$/, '');
+  }
   const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
   const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || `127.0.0.1:7000`;
   return `${proto}://${host}`.replace(/\/+$/, '');
 }
 
 export function parseMediaId(mediaType: string, idStr: string, extra = ''): VideoQueryMeta {
-  const cleanId = decodeURIComponent(idStr.replace(/\.json$/i, '')).trim();
+  const cleanId = safeDecodeURIComponent(idStr.replace(/\.json$/i, '')).trim();
   let season: number | undefined;
   let episode: number | undefined;
   let imdbId = cleanId;
@@ -61,7 +72,7 @@ export function parseMediaId(mediaType: string, idStr: string, extra = ''): Vide
 
   let filename = '';
   if (extra) {
-    const unquotedExtra = decodeURIComponent(extra.replace(/\.json$/i, ''));
+    const unquotedExtra = safeDecodeURIComponent(extra.replace(/\.json$/i, ''));
     const m = unquotedExtra.match(/filename=([^&]+)/);
     if (m) {
       filename = m[1].trim();
@@ -316,3 +327,4 @@ subtitlesRouter.get('/:config/subtitles/:mediaType/:idStr.json', (req, res) => {
 subtitlesRouter.get('/:config/subtitles/:mediaType/:idStr/:extra(*)?', (req, res) => {
   return handleSubtitlesRequest(req, res, req.params.mediaType, req.params.idStr, req.params.extra || '', req.params.config);
 });
+

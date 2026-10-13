@@ -25,4 +25,10 @@ describe('Subtitle & Harbor Routes', () => {
     expect(res.status).toBe(204);
     expect(res.headers['access-control-allow-origin']).toBe('*');
   });
+
+  it('routes subtitle search requests with filename extra', async () => {
+    const res = await request(app).get('/subtitles/movie/tt1234567/filename=Test.Movie.2024.1080p.mkv.json');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.subtitles)).toBe(true);
+  });
 });
