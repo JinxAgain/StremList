@@ -1,4 +1,8 @@
 # StremList Server Stopper
+[Console]::InputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+chcp 65001 | Out-Null
 Set-Location $PSScriptRoot
 
 Write-Host "========================================================" -ForegroundColor Cyan
