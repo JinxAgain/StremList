@@ -21,7 +21,9 @@ const VIDEO_EXTENSIONS = new Set([
   '.wmv',
   '.flv',
   '.m4v',
-  '.webm'
+  '.webm',
+  '.iso',
+  '.m2ts'
 ]);
 
 const SAMPLE_REGEX = /(^|[._\-\s])(sample|featurette|trailer|bonus|extra)([._\-\s]|$)/i;
@@ -34,7 +36,12 @@ function getExtension(filename: string): string {
 
 function isVideoFile(file: FileItem): boolean {
   if (file.is_dir) return false;
-  return VIDEO_EXTENSIONS.has(getExtension(file.name));
+  const ext = getExtension(file.name);
+  if (VIDEO_EXTENSIONS.has(ext)) return true;
+  // Support extensionless video files (e.g. PikPak/115 saving files named purely by infoHash or title)
+  // Media files are typically large (> 50MB)
+  if (ext === '' && file.size > 50 * 1024 * 1024) return true;
+  return false;
 }
 
 function isSampleFile(file: FileItem): boolean {

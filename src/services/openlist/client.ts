@@ -231,6 +231,23 @@ export class OpenListClient {
     return data?.code === 200;
   }
 
+  async remove(path: string): Promise<boolean> {
+    const clean = path.replace(/\/+$/, '');
+    const parts = clean.split('/');
+    const name = parts.pop();
+    const dir = parts.join('/') || '/';
+    if (!name) return false;
+    const data = await this.request('/api/fs/remove', { dir, names: [name] });
+    return data?.code === 200;
+  }
+
+  evictCachedHash(infoHash: string): void {
+    const lower = infoHash.toLowerCase().trim();
+    if (this.cachedHashesCache) {
+      this.cachedHashesCache.hashes.delete(lower);
+    }
+  }
+
   async addOfflineDownload(path: string, urls: string[], tool?: string): Promise<boolean> {
     const candidates = getToolCandidates(tool || '115');
     console.log(`[OpenList] 📤 Adding offline download task...`);

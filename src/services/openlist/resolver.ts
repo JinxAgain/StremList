@@ -85,7 +85,19 @@ export class PlaybackResolver {
   ): Promise<{ fullPath: string; file: FileItem } | null> {
     const listResult = await this.client.list(dirPath, refresh);
     const items = listResult.content || [];
-    if (items.length === 0) return null;
+    if (items.length === 0) {
+      // If this is a specific hash directory /<Drive>/StremList/<hash> and it has 0 items,
+      // it's an empty dangling folder from a failed offline download.
+      // Clean it up so it stops creating false-positive cache hits in Harbor/Stremio!
+      const isHashDir = /\/StremList\/[a-f0-9]{40}$/i.test(dirPath);
+      if (isHashDir) {
+        const hash = dirPath.split('/').pop() || '';
+        console.warn(`[Resolver] 🧹 Detected empty dangling hash folder ${dirPath}. Removing to prevent false cache hits...`);
+        this.client.remove(dirPath).catch(() => {});
+        this.client.evictCachedHash(hash);
+      }
+      return null;
+    }
 
     // Check directly in this directory
     const matched = matchPlayableFile(items, target);
@@ -198,10 +210,17 @@ export class PlaybackResolver {
     const rootDrive = `/${targetDrive}`;
 
     console.log(`[Resolver] ⏳ Cache MISS across all drives. Starting offline download on DEFAULT_DRIVE "${targetDrive}"...`);
-    // Pre-create directory so cloud drive has dedicated target folder
+    // Ensure parent /StremList directory exists
     await this.client.mkdir(parentPrimary);
-    await this.client.mkdir(targetPath);
-    const magnetUrl = `magnet:?xt=urn:btih:${infoHash}`;
+
+    let magnetUrl = `magnet:?xt=urn:btih:${infoHash}`;
+    if (target.title) {
+      const cleanTitle = target.title.replace(/[\r\n\t]/g, ' ').trim();
+      if (cleanTitle) {
+        magnetUrl += `&dn=${encodeURIComponent(cleanTitle)}`;
+      }
+    }
+
     const taskAdded = await this.client.addOfflineDownload(targetPath, [magnetUrl], targetDrive);
     if (!taskAdded) {
       console.warn(`[Resolver] ⚠️ Warning: addOfflineDownload API reported failure. Will still poll in case it queued.`);
@@ -222,6 +241,13 @@ export class PlaybackResolver {
           isAborted = true;
           if (timer) clearTimeout(timer);
           console.log(`[Resolver] 🛑 Client disconnected/aborted playback for ${infoHash}`);
+          // If aborted, clean up empty targetPath if left dangling
+          this.client.list(targetPath, false).then((res) => {
+            if (!res.content || res.content.length === 0) {
+              this.client.remove(targetPath).catch(() => {});
+              this.client.evictCachedHash(infoHash);
+            }
+          }).catch(() => {});
           reject(new Error('CLIENT_ABORTED'));
         });
       }
@@ -233,6 +259,14 @@ export class PlaybackResolver {
 
         if (Date.now() - startTime >= timeoutMs) {
           console.error(`[Resolver] ⏱️ Offline download polling timed out after ${elapsedSec}s for ${infoHash}`);
+          // Clean up dangling empty targetPath if it was created but contains no files
+          this.client.list(targetPath, false).then((res) => {
+            if (!res.content || res.content.length === 0) {
+              console.warn(`[Resolver] 🧹 Cleaning up empty target folder on timeout: ${targetPath}`);
+              this.client.remove(targetPath).catch(() => {});
+              this.client.evictCachedHash(infoHash);
+            }
+          }).catch(() => {});
           reject(new Error('OFFLINE_DOWNLOAD_TIMEOUT'));
           return;
         }

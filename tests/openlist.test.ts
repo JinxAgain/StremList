@@ -234,4 +234,25 @@ describe('OpenList Client & Playback Resolver', () => {
     expect(url3).toBe('https://115.com/direct/concurrent.mkv');
     expect(getRawSpy).toHaveBeenCalledTimes(1);
   });
+
+  it('cleans up empty dangling hash folders when inspected during cache lookup', async () => {
+    const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
+    vi.spyOn(client, 'getMountedDrives').mockResolvedValue(['115']);
+    vi.spyOn(client, 'list').mockResolvedValue({ content: [] });
+    const removeSpy = vi.spyOn(client, 'remove').mockResolvedValue(true);
+    const evictSpy = vi.spyOn(client, 'evictCachedHash');
+    vi.spyOn(client, 'addOfflineDownload').mockResolvedValue(true);
+
+    const resolver = new PlaybackResolver(client, {
+      ...mockConfig,
+      pollTimeout: 0.2,
+      pollInterval: 50
+    });
+
+    const hash = '8438ee05d038e9b25a268612ea624efb223db5cb';
+    await expect(resolver.resolvePlayUrl(hash, { type: 'movie' })).rejects.toThrow();
+
+    expect(removeSpy).toHaveBeenCalledWith(`/115/StremList/${hash}`);
+    expect(evictSpy).toHaveBeenCalledWith(hash);
+  });
 });

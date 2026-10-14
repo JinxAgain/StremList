@@ -65,4 +65,15 @@ describe('File Matcher Service', () => {
     const match = matchPlayableFile(files, { type: 'movie' });
     expect(match).toBeNull();
   });
+
+  it('recognizes large extensionless files (> 50MB) saved by infoHash or clean title', () => {
+    const files: FileItem[] = [
+      { name: '8438ee05d038e9b25a268612ea624efb223db5cb', size: 2290962292, is_dir: false },
+      { name: 'random_text_without_ext', size: 1024, is_dir: false }
+    ];
+
+    const match = matchPlayableFile(files, { type: 'movie' });
+    expect(match).not.toBeNull();
+    expect(match?.name).toBe('8438ee05d038e9b25a268612ea624efb223db5cb');
+  });
 });
