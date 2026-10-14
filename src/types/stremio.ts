@@ -10,6 +10,8 @@ export interface StremioManifest {
   version: string;
   name: string;
   description: string;
+  logo?: string;
+  background?: string;
   resources: (string | StremioResourceObject)[];
   types: ('movie' | 'series' | 'anime' | 'other')[];
   idPrefixes?: string[];
