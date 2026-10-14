@@ -112,10 +112,28 @@ export class ScraperAggregator {
       }
     }
 
-    // Assign isCached flag to each stream
+    // Assign isCached flag: verify candidate matching streams actually have content (not empty folders)
+    const matchingStreams = uniqueStreams.filter((s) => cachedHashes.has(s.infoHash));
+    const verifiedHashes = new Set<string>();
+
+    if (this.openlistClient && matchingStreams.length > 0) {
+      await Promise.allSettled(
+        matchingStreams.map(async (s) => {
+          if (typeof this.openlistClient!.hasCachedContent === 'function') {
+            const hasContent = await this.openlistClient!.hasCachedContent(s.infoHash);
+            if (hasContent) {
+              verifiedHashes.add(s.infoHash);
+            }
+          } else {
+            verifiedHashes.add(s.infoHash);
+          }
+        })
+      );
+    }
+
     uniqueStreams = uniqueStreams.map((s) => ({
       ...s,
-      isCached: cachedHashes.has(s.infoHash)
+      isCached: verifiedHashes.has(s.infoHash)
     }));
 
     // Sort streams according to Comet / RTN ranking standards

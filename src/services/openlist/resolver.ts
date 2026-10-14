@@ -1,6 +1,6 @@
 import { OpenListClient } from './client.js';
 import { AppConfig } from '../../config.js';
-import { MatchTarget, matchPlayableFile, FileItem } from '../matcher/file-matcher.js';
+import { MatchTarget, matchPlayableCandidate, FileItem } from '../matcher/file-matcher.js';
 
 export function normalizeDriveName(drive: string): string {
   const lower = drive.toLowerCase();
@@ -14,13 +14,20 @@ interface CachedPlayUrl {
   expiresAt: number;
 }
 
+interface PlayableCandidateItem {
+  fullPath: string;
+  file: FileItem;
+}
+
 // Module-level caches shared across resolver instances
 const playUrlCache = new Map<string, CachedPlayUrl>();
 const inFlightResolutions = new Map<string, Promise<string>>();
+const recentOfflineTasks = new Map<string, number>(); // infoHash -> timestamp
 
 export function clearPlayUrlCache(): void {
   playUrlCache.clear();
   inFlightResolutions.clear();
+  recentOfflineTasks.clear();
 }
 
 function buildCacheKey(infoHash: string, target: MatchTarget): string {
@@ -29,6 +36,47 @@ function buildCacheKey(infoHash: string, target: MatchTarget): string {
   const s = target.season !== undefined ? target.season : 'na';
   const e = target.episode !== undefined ? target.episode : 'na';
   return `${h}:${f}:${s}:${e}`;
+}
+
+async function collectCandidatesRecursive(
+  client: OpenListClient,
+  dirPath: string,
+  refresh: boolean,
+  depth = 0,
+  maxDepth = 3
+): Promise<PlayableCandidateItem[]> {
+  if (depth > maxDepth) return [];
+  const listResult = await client.list(dirPath, refresh).catch(() => ({ content: [] }));
+  const items = listResult.content || [];
+  if (items.length === 0) return [];
+
+  const candidates: PlayableCandidateItem[] = [];
+  const subDirs: FileItem[] = [];
+
+  for (const item of items) {
+    if (item.is_dir) {
+      subDirs.push(item);
+    } else {
+      const cleanDir = dirPath.replace(/\/+$/, '');
+      candidates.push({
+        fullPath: `${cleanDir}/${item.name}`,
+        file: item
+      });
+    }
+  }
+
+  if (subDirs.length > 0 && depth < maxDepth) {
+    const subPromises = subDirs.map((sd) => {
+      const subPath = `${dirPath.replace(/\/+$/, '')}/${sd.name}`;
+      return collectCandidatesRecursive(client, subPath, refresh, depth + 1, maxDepth);
+    });
+    const nested = await Promise.all(subPromises);
+    for (const nestedList of nested) {
+      candidates.push(...nestedList);
+    }
+  }
+
+  return candidates;
 }
 
 export class PlaybackResolver {
@@ -83,47 +131,11 @@ export class PlaybackResolver {
     target: MatchTarget,
     refresh = false
   ): Promise<{ fullPath: string; file: FileItem } | null> {
-    const listResult = await this.client.list(dirPath, refresh);
-    const items = listResult.content || [];
-    if (items.length === 0) {
-      // If this is a specific hash directory /<Drive>/StremList/<hash> and it has 0 items,
-      // it's an empty dangling folder from a failed offline download.
-      // Clean it up so it stops creating false-positive cache hits in Harbor/Stremio!
-      const isHashDir = /\/StremList\/[a-f0-9]{40}$/i.test(dirPath);
-      if (isHashDir) {
-        const hash = dirPath.split('/').pop() || '';
-        console.warn(`[Resolver] 🧹 Detected empty dangling hash folder ${dirPath}. Removing to prevent false cache hits...`);
-        this.client.remove(dirPath).catch(() => {});
-        this.client.evictCachedHash(hash);
-      }
-      return null;
-    }
+    const allCandidates = await collectCandidatesRecursive(this.client, dirPath, refresh, 0, 3);
+    if (allCandidates.length === 0) return null;
 
-    // Check directly in this directory
-    const matched = matchPlayableFile(items, target);
-    if (matched) {
-      return {
-        fullPath: `${dirPath.replace(/\/+$/, '')}/${matched.name}`,
-        file: matched
-      };
-    }
-
-    // Check inside subdirectories (torrents often extract into a folder)
-    const subDirs = items.filter((i) => i.is_dir);
-    for (const subDir of subDirs) {
-      const subPath = `${dirPath.replace(/\/+$/, '')}/${subDir.name}`;
-      const subList = await this.client.list(subPath, refresh);
-      const subItems = subList.content || [];
-      const subMatched = matchPlayableFile(subItems, target);
-      if (subMatched) {
-        return {
-          fullPath: `${subPath}/${subMatched.name}`,
-          file: subMatched
-        };
-      }
-    }
-
-    return null;
+    const matched = matchPlayableCandidate(allCandidates, target);
+    return matched || null;
   }
 
   private async findPlayableByTitleInDir(
@@ -132,7 +144,7 @@ export class PlaybackResolver {
     refresh = false
   ): Promise<{ fullPath: string; file: FileItem } | null> {
     if (!target.title) return null;
-    const listResult = await this.client.list(dirPath, refresh);
+    const listResult = await this.client.list(dirPath, refresh).catch(() => ({ content: [] }));
     const items = listResult.content || [];
     const cleanTarget = target.title.toLowerCase().replace(/[^a-z0-9]/g, ' ').trim();
     const keywords = cleanTarget.split(/\s+/).filter((w) => w.length > 2);
@@ -170,7 +182,14 @@ export class PlaybackResolver {
     // 1. Fast Cache Check: Check /<Drive>/StremList/<hash> for each mounted drive
     for (const drive of candidateDrives) {
       const drivePath = this.getDrivePath(drive, infoHash);
-      const cached = await this.findPlayableInPath(drivePath, target, false);
+      // Quick check using local OpenList index first
+      let cached = await this.findPlayableInPath(drivePath, target, false);
+      // If not found in local cache, force live refresh from cloud drive to discover newly completed files
+      // or incrementally downloaded series episodes before declaring a cache miss
+      if (!cached) {
+        cached = await this.findPlayableInPath(drivePath, target, true);
+      }
+
       if (cached) {
         console.log(`[Resolver] ⚡ Cache HIT in drive "${drive}"! Found: ${cached.file.name}`);
         const rawUrl = await this.client.getRawUrl(cached.fullPath);
@@ -211,19 +230,33 @@ export class PlaybackResolver {
 
     console.log(`[Resolver] ⏳ Cache MISS across all drives. Starting offline download on DEFAULT_DRIVE "${targetDrive}"...`);
     // Ensure parent /StremList directory exists
-    await this.client.mkdir(parentPrimary);
+    await this.client.mkdir(parentPrimary).catch(() => {});
 
-    let magnetUrl = `magnet:?xt=urn:btih:${infoHash}`;
-    if (target.title) {
-      const cleanTitle = target.title.replace(/[\r\n\t]/g, ' ').trim();
-      if (cleanTitle) {
-        magnetUrl += `&dn=${encodeURIComponent(cleanTitle)}`;
+    const normHash = infoHash.toLowerCase().trim();
+    const lastSubmitted = recentOfflineTasks.get(normHash);
+    const nowTs = Date.now();
+    const RECENT_TASK_TTL_MS = 15 * 60 * 1000; // 15 minutes deduplication window
+
+    if (lastSubmitted && nowTs - lastSubmitted < RECENT_TASK_TTL_MS) {
+      const elapsedAgo = Math.round((nowTs - lastSubmitted) / 1000);
+      console.log(
+        `[Resolver] ⏳ Offline task for ${infoHash} was already submitted ${elapsedAgo}s ago. Skipping duplicate submission to cloud drive and proceeding to poll...`
+      );
+    } else {
+      let magnetUrl = `magnet:?xt=urn:btih:${infoHash}`;
+      if (target.title) {
+        const cleanTitle = target.title.replace(/[\r\n\t]/g, ' ').trim();
+        if (cleanTitle) {
+          magnetUrl += `&dn=${encodeURIComponent(cleanTitle)}`;
+        }
       }
-    }
 
-    const taskAdded = await this.client.addOfflineDownload(targetPath, [magnetUrl], targetDrive);
-    if (!taskAdded) {
-      console.warn(`[Resolver] ⚠️ Warning: addOfflineDownload API reported failure. Will still poll in case it queued.`);
+      recentOfflineTasks.set(normHash, nowTs);
+      const taskAdded = await this.client.addOfflineDownload(targetPath, [magnetUrl], targetDrive);
+      if (!taskAdded) {
+        console.warn(`[Resolver] ⚠️ Warning: addOfflineDownload API reported failure. Will still poll in case it queued.`);
+        recentOfflineTasks.delete(normHash);
+      }
     }
 
     // 5. Synchronous Polling Loop with Abort Detection & Timeout
@@ -241,13 +274,6 @@ export class PlaybackResolver {
           isAborted = true;
           if (timer) clearTimeout(timer);
           console.log(`[Resolver] 🛑 Client disconnected/aborted playback for ${infoHash}`);
-          // If aborted, clean up empty targetPath if left dangling
-          this.client.list(targetPath, false).then((res) => {
-            if (!res.content || res.content.length === 0) {
-              this.client.remove(targetPath).catch(() => {});
-              this.client.evictCachedHash(infoHash);
-            }
-          }).catch(() => {});
           reject(new Error('CLIENT_ABORTED'));
         });
       }
@@ -259,14 +285,6 @@ export class PlaybackResolver {
 
         if (Date.now() - startTime >= timeoutMs) {
           console.error(`[Resolver] ⏱️ Offline download polling timed out after ${elapsedSec}s for ${infoHash}`);
-          // Clean up dangling empty targetPath if it was created but contains no files
-          this.client.list(targetPath, false).then((res) => {
-            if (!res.content || res.content.length === 0) {
-              console.warn(`[Resolver] 🧹 Cleaning up empty target folder on timeout: ${targetPath}`);
-              this.client.remove(targetPath).catch(() => {});
-              this.client.evictCachedHash(infoHash);
-            }
-          }).catch(() => {});
           reject(new Error('OFFLINE_DOWNLOAD_TIMEOUT'));
           return;
         }

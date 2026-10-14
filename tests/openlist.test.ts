@@ -235,24 +235,104 @@ describe('OpenList Client & Playback Resolver', () => {
     expect(getRawSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('cleans up empty dangling hash folders when inspected during cache lookup', async () => {
+  it('falls back to live refresh before declaring cache miss to prevent duplicate offline downloads', async () => {
     const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
     vi.spyOn(client, 'getMountedDrives').mockResolvedValue(['115']);
-    vi.spyOn(client, 'list').mockResolvedValue({ content: [] });
-    const removeSpy = vi.spyOn(client, 'remove').mockResolvedValue(true);
-    const evictSpy = vi.spyOn(client, 'evictCachedHash');
-    vi.spyOn(client, 'addOfflineDownload').mockResolvedValue(true);
 
-    const resolver = new PlaybackResolver(client, {
+    let callCount = 0;
+    vi.spyOn(client, 'list').mockImplementation(async (path: string, refresh?: boolean) => {
+      callCount++;
+      // First call (refresh: false) returns empty (stale cache)
+      if (!refresh) {
+        return { content: [] };
+      }
+      // Second call (refresh: true) returns newly arrived file
+      return {
+        content: [{ name: 'Below.S01E03.2160p.mkv', size: 5 * 1024 * 1024 * 1024, is_dir: false }]
+      };
+    });
+
+    const addOfflineSpy = vi.spyOn(client, 'addOfflineDownload');
+    vi.spyOn(client, 'getRawUrl').mockResolvedValue('https://115.com/direct/below_e03.mkv');
+
+    const resolver = new PlaybackResolver(client, mockConfig);
+    const url = await resolver.resolvePlayUrl('belowhash123', { type: 'series', season: 1, episode: 3 });
+
+    expect(url).toBe('https://115.com/direct/below_e03.mkv');
+    // Crucially: no duplicate offline download task was submitted to cloud drive!
+    expect(addOfflineSpy).not.toHaveBeenCalled();
+    expect(callCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it('skips duplicate addOfflineDownload if called again for the same infoHash within recent window', async () => {
+    const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
+    vi.spyOn(client, 'getMountedDrives').mockResolvedValue(['PikPak']);
+    vi.spyOn(client, 'list').mockResolvedValue({ content: [] });
+    const addOfflineSpy = vi.spyOn(client, 'addOfflineDownload').mockResolvedValue(true);
+
+    const fastTimeoutResolver = new PlaybackResolver(client, {
       ...mockConfig,
+      defaultDrive: 'PikPak',
       pollTimeout: 0.2,
       pollInterval: 50
     });
 
-    const hash = '8438ee05d038e9b25a268612ea624efb223db5cb';
-    await expect(resolver.resolvePlayUrl(hash, { type: 'movie' })).rejects.toThrow();
+    // First attempt times out
+    await expect(fastTimeoutResolver.resolvePlayUrl('dupetest123', { type: 'movie' })).rejects.toThrow(
+      'OFFLINE_DOWNLOAD_TIMEOUT'
+    );
+    expect(addOfflineSpy).toHaveBeenCalledTimes(1);
 
-    expect(removeSpy).toHaveBeenCalledWith(`/115/StremList/${hash}`);
-    expect(evictSpy).toHaveBeenCalledWith(hash);
+    // Second attempt (retry after timeout) should NOT dispatch addOfflineDownload again
+    await expect(fastTimeoutResolver.resolvePlayUrl('dupetest123', { type: 'movie' })).rejects.toThrow(
+      'OFFLINE_DOWNLOAD_TIMEOUT'
+    );
+    expect(addOfflineSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('selects full movie in subdirectory over ad video file in root folder', async () => {
+    const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
+    vi.spyOn(client, 'getMountedDrives').mockResolvedValue(['PikPak']);
+
+    vi.spyOn(client, 'list').mockImplementation(async (path: string) => {
+      if (path === '/PikPak/StremList/adtesthash') {
+        return {
+          content: [
+            {
+              name: '【更多无水印高清电影请访问 www.HDBTHD.com】【更多无水印高清电影请访问 www.HDBTHD.com】.MKV',
+              size: 636976,
+              is_dir: false
+            },
+            {
+              name: '【高清影视之家发布 www.HDBTHD.com】速度与激情',
+              size: 0,
+              is_dir: true
+            }
+          ]
+        };
+      }
+      if (path === '/PikPak/StremList/adtesthash/【高清影视之家发布 www.HDBTHD.com】速度与激情') {
+        return {
+          content: [
+            {
+              name: 'The.Fast.and.the.Furious.2001.2160p.UHD.BluRay.x265.10bit.mkv',
+              size: 19 * 1024 * 1024 * 1024,
+              is_dir: false
+            }
+          ]
+        };
+      }
+      return { content: [] };
+    });
+
+    vi.spyOn(client, 'getRawUrl').mockImplementation(async (path: string) => {
+      return `https://pikpak.me/download${path}`;
+    });
+
+    const resolver = new PlaybackResolver(client, { ...mockConfig, defaultDrive: 'PikPak' });
+    const resolvedUrl = await resolver.resolvePlayUrl('adtesthash', { type: 'movie' });
+
+    expect(resolvedUrl).toContain('The.Fast.and.the.Furious.2001.2160p.UHD.BluRay.x265.10bit.mkv');
+    expect(resolvedUrl).not.toContain('更多无水印高清电影请访问');
   });
 });

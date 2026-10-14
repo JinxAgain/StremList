@@ -144,4 +144,36 @@ describe('Scraper Aggregator Service', () => {
     expect(streams[0].behaviorHints?.filename).toBe('Movie.2024.2160p.mkv');
     expect(streams[0].behaviorHints?.videoSize).toBe(16106127360);
   });
+
+  it('does not label streams with ⚡ if the hash folder exists but contains 0 files', async () => {
+    const emptyHash = 'dddddddddddddddddddddddddddddddddddddddd';
+
+    const mockOpenListClient = {
+      getAllCachedHashes: vi.fn().mockResolvedValue(new Set([emptyHash])),
+      hasCachedContent: vi.fn().mockResolvedValue(false) // Folder exists but has 0 files
+    } as any;
+
+    const aggregator = new ScraperAggregator(
+      'https://torrentio.strem.fun',
+      'https://comet.test',
+      mockOpenListClient,
+      '115'
+    );
+
+    vi.spyOn(TorrentioScraper.prototype, 'fetchStreams').mockResolvedValue([
+      {
+        infoHash: emptyHash,
+        name: 'Torrentio 1080p',
+        title: 'Empty Folder Movie 1080p',
+        fileIdx: 0
+      }
+    ]);
+    vi.spyOn(CometScraper.prototype, 'fetchStreams').mockResolvedValue([]);
+
+    const streams = await aggregator.fetchStreams('movie', 'tt1234567', 'http://127.0.0.1:7000');
+    expect(streams).toHaveLength(1);
+    // Crucially: marked with 🧲 (uncached), NEVER ⚡!
+    expect(streams[0].name).toContain('[115🧲]');
+    expect(streams[0].name).not.toContain('⚡');
+  });
 });

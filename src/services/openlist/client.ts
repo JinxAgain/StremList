@@ -103,7 +103,7 @@ export class OpenListClient {
       drives.map(async (drive) => {
         try {
           const stremListDir = `/${drive}/StremList`;
-          const listing = await this.list(stremListDir, false);
+          const listing = await this.list(stremListDir, forceRefresh);
           for (const item of listing.content || []) {
             if (item.is_dir && item.name) {
               const lower = item.name.toLowerCase().trim();
@@ -120,6 +120,19 @@ export class OpenListClient {
 
     this.cachedHashesCache = { hashes, expiresAt: now + 20000 };
     return hashes;
+  }
+
+  async hasCachedContent(infoHash: string): Promise<boolean> {
+    const drives = await this.getMountedDrives();
+    for (const drive of drives) {
+      try {
+        const res = await this.list(`/${drive}/StremList/${infoHash}`, false);
+        if (res.content && res.content.length > 0) {
+          return true;
+        }
+      } catch {}
+    }
+    return false;
   }
 
   async refreshToken(): Promise<string | null> {
