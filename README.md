@@ -166,7 +166,7 @@ Mount PikPak in OpenList under `/pikpak` or `/PikPak`. PikPak CDN links support 
 | `TORRENTIO_URL` | `https://torrentio.strem.fun` | Upstream Torrentio scraper URL |
 | `COMET_URL` | `https://comet.elfhosted.com` | Upstream Comet scraper URL |
 | `POLL_TIMEOUT` | `25` | Maximum seconds to wait for offline download completion |
-| `POLL_INTERVAL` | `1500` | Polling interval in milliseconds |
+| `POLL_INTERVAL` | `3000` | Polling interval in milliseconds (3s default to avoid cloud rate limits) |
 | `SUBTITLE_ENABLED`| `true` | Enable or disable Chinese subtitles engine |
 | `SUBTITLE_LANG` | `bilingual` | Subtitle preference (`bilingual`, `zh-CN`, `zh-TW`) |
 | `SUBTITLE_SOURCE` | `all` | Active subtitle scrapers (`all`, `subhd`, `shooter`, `zimuku`) |

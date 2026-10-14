@@ -9,12 +9,73 @@ export function normalizeDriveName(drive: string): string {
   return drive;
 }
 
+interface CachedPlayUrl {
+  url: string;
+  expiresAt: number;
+}
+
+// Module-level caches shared across resolver instances
+const playUrlCache = new Map<string, CachedPlayUrl>();
+const inFlightResolutions = new Map<string, Promise<string>>();
+
+export function clearPlayUrlCache(): void {
+  playUrlCache.clear();
+  inFlightResolutions.clear();
+}
+
+function buildCacheKey(infoHash: string, target: MatchTarget): string {
+  const h = infoHash.toLowerCase().trim();
+  const f = target.fileIdx !== undefined ? target.fileIdx : 'def';
+  const s = target.season !== undefined ? target.season : 'na';
+  const e = target.episode !== undefined ? target.episode : 'na';
+  return `${h}:${f}:${s}:${e}`;
+}
+
 export class PlaybackResolver {
   constructor(private client: OpenListClient, private config: AppConfig) {}
 
   private getDrivePath(drive: string, infoHash: string): string {
     const actualDriveName = normalizeDriveName(drive);
     return `/${actualDriveName}/StremList/${infoHash}`;
+  }
+
+  async resolvePlayUrl(
+    infoHash: string,
+    target: MatchTarget,
+    onAbort?: (abortHandler: () => void) => void
+  ): Promise<string> {
+    const cacheKey = buildCacheKey(infoHash, target);
+    const now = Date.now();
+
+    // 1. Check in-memory URL cache (10 minutes TTL) to prevent hammering OpenList & PikPak
+    const cachedEntry = playUrlCache.get(cacheKey);
+    if (cachedEntry && cachedEntry.expiresAt > now) {
+      console.log(`[Resolver] ⚡ Returning cached play URL for ${infoHash} (expires in ${Math.round((cachedEntry.expiresAt - now) / 1000)}s)`);
+      return cachedEntry.url;
+    }
+
+    // 2. Coalesce concurrent in-flight resolutions for the exact same target
+    const inFlight = inFlightResolutions.get(cacheKey);
+    if (inFlight) {
+      console.log(`[Resolver] ⏳ Attaching to in-flight resolution for ${infoHash}...`);
+      return await inFlight;
+    }
+
+    // 3. Initiate resolution and cache result
+    const resolutionPromise = this.doResolvePlayUrl(infoHash, target, onAbort);
+    inFlightResolutions.set(cacheKey, resolutionPromise);
+
+    try {
+      const resolvedUrl = await resolutionPromise;
+      // Cache valid playback URL for 10 minutes
+      playUrlCache.set(cacheKey, {
+        url: resolvedUrl,
+        expiresAt: Date.now() + 10 * 60 * 1000
+      });
+      return resolvedUrl;
+    } finally {
+      inFlightResolutions.delete(cacheKey);
+    }
   }
 
   private async findPlayableInPath(
@@ -78,7 +139,7 @@ export class PlaybackResolver {
     return null;
   }
 
-  async resolvePlayUrl(
+  private async doResolvePlayUrl(
     infoHash: string,
     target: MatchTarget,
     onAbort?: (abortHandler: () => void) => void

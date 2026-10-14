@@ -1,6 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { OpenListClient } from '../src/services/openlist/client.js';
-import { PlaybackResolver } from '../src/services/openlist/resolver.js';
+import { PlaybackResolver, clearPlayUrlCache } from '../src/services/openlist/resolver.js';
 import { AppConfig } from '../src/config.js';
 
 const mockConfig: AppConfig = {
@@ -15,6 +15,11 @@ const mockConfig: AppConfig = {
 };
 
 describe('OpenList Client & Playback Resolver', () => {
+  beforeEach(() => {
+    clearPlayUrlCache();
+    OpenListClient.clearRawUrlCache();
+    vi.restoreAllMocks();
+  });
   it('returns direct link immediately if file is already cached in default drive', async () => {
     const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
 
@@ -191,5 +196,42 @@ describe('OpenList Client & Playback Resolver', () => {
     expect(refreshSpy).toHaveBeenCalled();
     expect(res.content?.length).toBe(1);
     expect(res.content?.[0].name).toBe('test.mkv');
+  });
+
+  it('caches resolved play URLs to avoid duplicate API calls on subsequent requests', async () => {
+    const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
+    vi.spyOn(client, 'list').mockResolvedValue({
+      content: [{ name: 'Movie.2024.mkv', size: 1000, is_dir: false }]
+    });
+    const getRawSpy = vi.spyOn(client, 'getRawUrl').mockResolvedValue('https://115.com/direct/movie.mkv');
+
+    const resolver = new PlaybackResolver(client, mockConfig);
+    const url1 = await resolver.resolvePlayUrl('cachetest1', { type: 'movie' });
+    const url2 = await resolver.resolvePlayUrl('cachetest1', { type: 'movie' });
+
+    expect(url1).toBe('https://115.com/direct/movie.mkv');
+    expect(url2).toBe('https://115.com/direct/movie.mkv');
+    expect(getRawSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('coalesces concurrent in-flight resolution requests into a single OpenList call', async () => {
+    const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
+    vi.spyOn(client, 'list').mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+      return { content: [{ name: 'Concurrent.2024.mkv', size: 1000, is_dir: false }] };
+    });
+    const getRawSpy = vi.spyOn(client, 'getRawUrl').mockResolvedValue('https://115.com/direct/concurrent.mkv');
+
+    const resolver = new PlaybackResolver(client, mockConfig);
+    const [url1, url2, url3] = await Promise.all([
+      resolver.resolvePlayUrl('inflighttest', { type: 'movie' }),
+      resolver.resolvePlayUrl('inflighttest', { type: 'movie' }),
+      resolver.resolvePlayUrl('inflighttest', { type: 'movie' })
+    ]);
+
+    expect(url1).toBe('https://115.com/direct/concurrent.mkv');
+    expect(url2).toBe('https://115.com/direct/concurrent.mkv');
+    expect(url3).toBe('https://115.com/direct/concurrent.mkv');
+    expect(getRawSpy).toHaveBeenCalledTimes(1);
   });
 });

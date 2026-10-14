@@ -30,7 +30,7 @@ const DEFAULT_CONFIG: AppConfig = {
   torrentioUrl: 'https://torrentio.strem.fun',
   cometUrl: 'https://comet.elfhosted.com',
   pollTimeout: 25,
-  pollInterval: 1500,
+  pollInterval: 3000,
   subtitleEnabled: true,
   subtitleLang: 'bilingual',
   subtitleSource: 'all',

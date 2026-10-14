@@ -315,7 +315,18 @@ export class OpenListClient {
     return false;
   }
 
+  private static rawUrlCache = new Map<string, { url: string; expiresAt: number }>();
+
+  static clearRawUrlCache(): void {
+    OpenListClient.rawUrlCache.clear();
+  }
+
   async getRawUrl(path: string): Promise<string | null> {
+    const cached = OpenListClient.rawUrlCache.get(path);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.url;
+    }
+
     const data = await this.request<OpenListGetData>('/api/fs/get', { path });
     if (data && data.code === 200 && data.data) {
       const cleanBase = this.baseUrl.replace(/\/+$/, '');
@@ -339,6 +350,10 @@ export class OpenListClient {
         if (data.data.sign) {
           const proxyUrl = `${cleanBase}/d${encodeURI(path)}?sign=${data.data.sign}`;
           console.log(`[OpenList] 🛡️ 115 stream route: using OpenList local proxy stream to prevent 403 hotlink rejection`);
+          OpenListClient.rawUrlCache.set(path, {
+            url: proxyUrl,
+            expiresAt: Date.now() + 10 * 60 * 1000
+          });
           return proxyUrl;
         }
 
@@ -348,7 +363,13 @@ export class OpenListClient {
         }
       }
 
-      return rawUrl || null;
+      if (rawUrl) {
+        OpenListClient.rawUrlCache.set(path, {
+          url: rawUrl,
+          expiresAt: Date.now() + 10 * 60 * 1000
+        });
+        return rawUrl;
+      }
     }
     return null;
   }
