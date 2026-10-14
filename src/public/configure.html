@@ -253,7 +253,10 @@
         </select>
         <div class="help-text">Primary storage target. If content exists in either drive, it plays instantly.</div>
         <div id="drive115Tip" style="margin-top: 8px; padding: 10px 12px; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; font-size: 12px; line-height: 1.5; color: #bae6fd;">
-          💡 <strong>115 原画播放提示：</strong>115 官方 CDN 限制外部播放器直连（会触发防盗链 403 Forbidden）。请在 OpenList 后台（<a href="http://127.0.0.1:5244/@manage/storages" target="_blank" style="color: #38bdf8; text-decoration: underline;">存储管理</a>）编辑 115：开启<strong>【Web 代理】</strong>并将 WebDAV 策略设为<strong>【本地代理】</strong>（由本地 OpenList 转发原画数据流，无需占用外网带宽）。StremList 登录测试时也会自动为您优化开启！
+          💡 <strong>115 原画播放提示：</strong>115 官方 CDN 限制外部播放器直连（会触发防盗链 403 Forbidden）。请在 OpenList 后台（<a class="manageStorageLink" href="http://127.0.0.1:5244/@manage/storages" target="_blank" style="color: #38bdf8; text-decoration: underline;">存储管理</a>）编辑 115：开启<strong>【Web 代理】</strong>并将 WebDAV 策略设为<strong>【本地代理】</strong>（由本地 OpenList 转发原画数据流，无需占用外网带宽）。StremList 登录测试时也会自动为您优化开启！
+        </div>
+        <div id="drivePikPakTip" style="margin-top: 8px; padding: 10px 12px; background: rgba(168, 85, 247, 0.1); border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 8px; font-size: 12px; line-height: 1.5; color: #e9d5ff; display: none;">
+          💡 <strong>PikPak 原画播放提示：</strong>请在 OpenList 后台（<a class="manageStorageLink" href="http://127.0.0.1:5244/@manage/storages" target="_blank" style="color: #c084fc; text-decoration: underline;">存储管理</a>）编辑 PikPak：务必<strong>关闭【禁用媒体链接】</strong>（取消勾选“禁用媒体链接”，保持开启媒体链接），以允许外部播放器直接获取 PikPak 官方高速原画直链播放。StremList 登录测试时也会自动为您优化开启！
         </div>
       </div>
 
@@ -394,6 +397,8 @@
           } else if (data.drives && data.drives.some(d => d.toLowerCase().includes('pikpak'))) {
             select.value = 'pikpak';
           }
+          updateDriveTip();
+          updateStorageManageLinks();
         } else {
           if (data.code === 401) {
             showStatus('error', '❌ 401: 访问被拒绝。OpenList 需要管理员权限，请点击【一键获取 Token】输入密码登录。');
@@ -406,6 +411,34 @@
       }
     }
 
+    function updateDriveTip() {
+      const drive = (document.getElementById('defaultDrive').value || '').toLowerCase();
+      const tip115 = document.getElementById('drive115Tip');
+      const tipPikPak = document.getElementById('drivePikPakTip');
+
+      if (drive.includes('pikpak')) {
+        if (tip115) tip115.style.display = 'none';
+        if (tipPikPak) tipPikPak.style.display = 'block';
+      } else if (drive.includes('115')) {
+        if (tip115) tip115.style.display = 'block';
+        if (tipPikPak) tipPikPak.style.display = 'none';
+      } else {
+        if (tip115) tip115.style.display = 'none';
+        if (tipPikPak) tipPikPak.style.display = 'none';
+      }
+    }
+
+    function updateStorageManageLinks() {
+      const url = document.getElementById('openlistUrl').value.trim().replace(/\/+$/, '');
+      if (url) {
+        document.querySelectorAll('.manageStorageLink').forEach(a => {
+          a.href = `${url}/@manage/storages`;
+        });
+      }
+    }
+
+    document.getElementById('defaultDrive').addEventListener('change', updateDriveTip);
+    document.getElementById('openlistUrl').addEventListener('input', updateStorageManageLinks);
     document.getElementById('testBtn').addEventListener('click', testConnection);
 
     document.getElementById('toggleLoginBtn').addEventListener('click', () => {
@@ -481,8 +514,10 @@
       });
     }
 
-    // Auto-test on page load if URL is set
+    // Initialize tips and links on page load
     window.addEventListener('DOMContentLoaded', () => {
+      updateDriveTip();
+      updateStorageManageLinks();
       const currentToken = document.getElementById('openlistToken').value.trim();
       if (currentToken) {
         testConnection();

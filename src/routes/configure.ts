@@ -186,12 +186,13 @@ export async function handleOpenListTest(req: Request, res: Response) {
 
       let proxyNotice: string | undefined;
       const has115 = drives.some((d: string) => d.toLowerCase().includes('115'));
-      if (has115 && token) {
+      const hasPikPak = drives.some((d: string) => d.toLowerCase().includes('pikpak'));
+      if ((has115 || hasPikPak) && token) {
         try {
           const client = new OpenListClient(cleanUrl, token);
           const enabled = await client.ensure115WebProxy();
           if (enabled) {
-            proxyNotice = '已自动为 115 开启 Web 本地代理，Stremio 可直接流畅播放！';
+            proxyNotice = '已自动检测并优化网盘配置（115 Web本地代理 / PikPak媒体直链），Stremio 可直接流畅播放！';
           }
         } catch {}
       }

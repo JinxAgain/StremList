@@ -307,6 +307,10 @@ export class OpenListClient {
             (storage.driver && storage.driver.toLowerCase().includes('115')) ||
             (storage.mount_path && storage.mount_path.toLowerCase().includes('115'));
 
+          const isPikPak =
+            (storage.driver && storage.driver.toLowerCase().includes('pikpak')) ||
+            (storage.mount_path && storage.mount_path.toLowerCase().includes('pikpak'));
+
           if (is115) {
             const needsProxy = !storage.web_proxy || storage.webdav_policy !== 'native_proxy';
             if (needsProxy) {
@@ -328,9 +332,26 @@ export class OpenListClient {
                   );
                 }
               }
-            } else {
-              this.proxyChecked = true;
-              return true;
+            }
+          }
+
+          if (isPikPak && storage.disable_media_link) {
+            console.log(
+              `[OpenList] 🔧 Found PikPak storage "${storage.mount_path}" (id: ${storage.id}) with "Disable media link" turned on. Auto-disabling...`
+            );
+            const getRes = await this.http.get(`/api/admin/storage/get?id=${storage.id}`);
+            if (getRes.data?.code === 200 && getRes.data.data) {
+              const item = getRes.data.data;
+              item.disable_media_link = false;
+              const updateRes = await this.http.post('/api/admin/storage/update', item);
+              if (updateRes.data?.code === 200) {
+                console.log(`[OpenList] ✅ Successfully turned off "Disable media link" for PikPak storage in OpenList!`);
+                anyUpdated = true;
+              } else {
+                console.warn(
+                  `[OpenList] ⚠️ Could not auto-update PikPak storage: ${updateRes.data?.message}`
+                );
+              }
             }
           }
         }
