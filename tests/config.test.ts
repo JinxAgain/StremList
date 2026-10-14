@@ -42,6 +42,8 @@ describe('Config Module', () => {
     delete process.env.DEFAULT_DRIVE;
     delete process.env.TORRENTIO_URL;
     delete process.env.COMET_URL;
+    delete process.env.POLL_TIMEOUT;
+    delete process.env.POLL_INTERVAL;
 
     const config = loadConfig();
 
@@ -50,7 +52,7 @@ describe('Config Module', () => {
     expect(config.openlistToken).toBe('');
     expect(config.defaultDrive).toBe('115');
     expect(config.pollTimeout).toBe(25);
-    expect(config.pollInterval).toBe(1500);
+    expect(config.pollInterval).toBe(3000);
   });
 
   it('encodes and decodes configuration string for URL path', () => {
