@@ -65,18 +65,27 @@ export class ScraperAggregator {
         let enrichedTitle = baseStream.title;
         let enrichedDesc = baseStream.description || baseStream.title;
 
-        // If chosen stream lacks explicit seeders but another stream had them, inject seeders info
-        if (bestSeeders > 0 && !hasExplicitSeeders(enrichedTitle)) {
-          if (enrichedTitle.includes('💾')) {
-            enrichedTitle = enrichedTitle.replace('💾', `👤 ${bestSeeders} 💾`);
-          } else {
-            enrichedTitle = `${enrichedTitle}\n👤 ${bestSeeders}`;
-          }
-          if (enrichedDesc && !hasExplicitSeeders(enrichedDesc)) {
-            if (enrichedDesc.includes('💾')) {
-              enrichedDesc = enrichedDesc.replace('💾', `👤 ${bestSeeders} 💾`);
+        // If chosen stream lacks explicit seeders or had 👤 0, update with the best seeders count
+        if (bestSeeders > 0) {
+          if (/👤\s*0\b/.test(enrichedTitle)) {
+            enrichedTitle = enrichedTitle.replace(/👤\s*0\b/, `👤 ${bestSeeders}`);
+          } else if (!hasExplicitSeeders(enrichedTitle)) {
+            if (enrichedTitle.includes('💾')) {
+              enrichedTitle = enrichedTitle.replace('💾', `👤 ${bestSeeders} 💾`);
             } else {
-              enrichedDesc = `${enrichedDesc}\n👤 ${bestSeeders}`;
+              enrichedTitle = `${enrichedTitle}\n👤 ${bestSeeders}`;
+            }
+          }
+
+          if (enrichedDesc) {
+            if (/👤\s*0\b/.test(enrichedDesc)) {
+              enrichedDesc = enrichedDesc.replace(/👤\s*0\b/, `👤 ${bestSeeders}`);
+            } else if (!hasExplicitSeeders(enrichedDesc)) {
+              if (enrichedDesc.includes('💾')) {
+                enrichedDesc = enrichedDesc.replace('💾', `👤 ${bestSeeders} 💾`);
+              } else {
+                enrichedDesc = `${enrichedDesc}\n👤 ${bestSeeders}`;
+              }
             }
           }
         }
