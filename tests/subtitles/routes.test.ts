@@ -1,10 +1,15 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../src/app.js';
 import { cacheManager } from '../../src/services/subtitles/cache/manager.js';
 
 describe('Subtitle & Harbor Routes', () => {
   const app = createApp();
+
+  beforeEach(() => {
+    delete process.env.SUBTITLE_SHOW_ORIGINAL;
+    delete process.env.SUBTITLE_KEEP_ORIGINAL_FORMAT;
+  });
 
   it('includes subtitles in manifest', async () => {
     const res = await request(app).get('/manifest.json');

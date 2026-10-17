@@ -13,6 +13,8 @@ describe('End-to-End Subtitle Flow', () => {
   const testSubContent = '1\n00:00:01,000 --> 00:00:03,000\nHello World from StremList E2E\n';
 
   beforeAll(() => {
+    delete process.env.SUBTITLE_SHOW_ORIGINAL;
+    delete process.env.SUBTITLE_KEEP_ORIGINAL_FORMAT;
     cacheManager.saveSubtitle(testSubFile, testSubContent);
     // Pre-populate search caches to test routing and response serialization deterministically
     cacheManager.setSearchResults('movie:tt1234567:0:0:bilingual:all:8', [

@@ -340,6 +340,133 @@ describe('BaseProvider utilities', () => {
     expect(candidates[1].id).toBe('sub102');
   });
 
+  it('normalizes protocol-relative work URLs to active domain and stops on first matching work in parseWorksFromSearch', async () => {
+    const zimuku = new ZimukuProvider();
+    const query: VideoQueryMeta = {
+      imdbId: 'tt36983905',
+      mediaType: 'movie',
+      title: 'The Uprising'
+    };
+
+    const searchHtml = `
+      <div class="box clearfix">
+        <div class="item prel clearfix">
+          <div class="title">
+            <p class="tt clearfix">
+              <a href="//zimuku.org/subs/78819.html" target="_blank"><b>起义 The Uprising (2026)</b></a>
+            </p>
+          </div>
+        </div>
+        <div class="item prel clearfix">
+          <div class="title">
+            <p class="tt clearfix">
+              <a href="//zimuku.org/subs/48918.html" target="_blank"><b>大学同学 第二季 Friends from College (2019)</b></a>
+            </p>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const workPageHtml = `
+      <div class="subs box clearfix">
+        <table class="table" id="subtb">
+          <tbody>
+            <tr>
+              <td class="first">
+                <a href="//zimuku.org/detail/237139.html" title="The.Uprising.2026.1080p.srt"><b>The.Uprising.2026.1080p.srt</b></a>
+                <span class="label label-info">SRT</span>
+              </td>
+              <td class="tac lang">
+                <img src="/images/chs.gif" alt="简体中文" data-original-title="简体中文" />
+              </td>
+              <td class="tac hidden-xs">
+                <i class="rating-star" data-original-title="字幕质量:9.7分"></i>
+              </td>
+              <td class="tac hidden-xs">496</td>
+              <td class="last hidden-xs">
+                <span class="glyphicon glyphicon-user"></span> <a href="/u/A31vKZjt0">与狼共舞</a>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    const requestedUrls: string[] = [];
+    vi.spyOn(zimuku as any, 'fetchPage').mockImplementation(async (url: string) => {
+      requestedUrls.push(url);
+      return { data: workPageHtml, status: 200 };
+    });
+
+    const candidates = await zimuku.parseWorksFromSearch(searchHtml, 'https://zmk.pw', query);
+
+    // 1. URL must be normalized to active domain without double slash or zimuku.org in path
+    expect(requestedUrls).toEqual(['https://zmk.pw/subs/78819.html']);
+    expect(requestedUrls[0]).not.toContain('//zimuku.org');
+
+    // 2. Only first matching work was scraped (Friends from College was ignored)
+    expect(candidates.length).toBe(1);
+    expect(candidates[0].id).toBe('237139');
+    expect(candidates[0].pageUrl).toBe('https://zmk.pw/detail/237139.html');
+  });
+
+  it('ignores homepage /subs/... links and parses data-original-title for language and rating in parseSubtitlesFromWork', () => {
+    const zimuku = new ZimukuProvider();
+    const query: VideoQueryMeta = {
+      imdbId: 'tt36983905',
+      mediaType: 'movie',
+      title: 'The Uprising'
+    };
+
+    const mixedHtml = `
+      <div class="subs box clearfix">
+        <table class="table" id="subtb">
+          <tbody>
+            <!-- Homepage work link that should be completely ignored -->
+            <tr>
+              <td class="first">
+                <a href="/subs/74167.html" title="10号舱里的女人 (2025)">10号舱里的女人 (2025)</a>
+              </td>
+              <td class="tac lang"><img src="/lang/chs.png" alt="简体" /></td>
+              <td class="tac">100</td>
+            </tr>
+            <!-- Valid subtitle detail link with protocol-relative URL & data-original-title -->
+            <tr>
+              <td class="first">
+                <a href="//zimuku.org/detail/237139.html" title="起义：罗宾汉的崛起.The Uprising.2026.srt">
+                  <b>起义：罗宾汉的崛起.The Uprising.2026.srt</b>
+                </a>
+                <span class="label label-info">SRT</span>
+              </td>
+              <td class="tac lang">
+                <img src="/china.gif" alt="" title="" data-original-title="简体中文" />
+                <img src="/jollyroger.gif" alt="" title="" data-original-title="双语" />
+              </td>
+              <td class="tac hidden-xs">
+                <i class="rating-star" title="" data-original-title="字幕质量:9.7分"></i>
+              </td>
+              <td class="tac hidden-xs">496</td>
+              <td class="last hidden-xs">
+                <span class="glyphicon glyphicon-user"></span> <a href="https://zimuku.org/u/A31vKZjt0">与狼共舞</a>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    const candidates = zimuku.parseSubtitlesFromWork(mixedHtml, 'https://zmk.pw', query, false);
+
+    // /subs/74167.html must be ignored! Only /detail/237139.html extracted!
+    expect(candidates.length).toBe(1);
+    expect(candidates[0].id).toBe('237139');
+    expect(candidates[0].pageUrl).toBe('https://zmk.pw/detail/237139.html');
+    expect(candidates[0].tags.bilingual).toBe(true);
+    expect(candidates[0].tags.lang).toContain('chs');
+    expect(candidates[0].rate).toBe(9.7);
+    expect(candidates[0].downloadsCount).toBe(496);
+  });
+
   it('instantiates SubhdProvider and ZimukuProvider', () => {
     const subhd = new SubhdProvider();
     const zimuku = new ZimukuProvider();

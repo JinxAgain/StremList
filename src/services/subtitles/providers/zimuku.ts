@@ -102,7 +102,7 @@ export class ZimukuProvider extends BaseProvider {
         // Handle JS window.location.replace redirect
         const mRedirect = text.match(/window\.location\.replace\(['"]([^'"]+)['"]\)/);
         if (mRedirect) {
-          const redirectUrl = mRedirect[1];
+          const redirectUrl = this.normalizeUrl(domain, mRedirect[1]);
           try {
             const redirectResp = await this.client.get(redirectUrl, {
               headers: { ...headers, Referer: urlStr },
@@ -293,16 +293,19 @@ export class ZimukuProvider extends BaseProvider {
   ): SubtitleCandidate | null {
     const isTv = meta.mediaType === 'series' || meta.season !== undefined;
     const firstTd = $(tr).find('td.first');
-    const subA = (firstTd.length ? firstTd.find('a').first() : $(tr).find('a[href*="/detail/"]').first()) || $(tr).find('a').first();
+    const subA = firstTd.length
+      ? firstTd.find('a[href*="/detail/"]').first()
+      : $(tr).find('a[href*="/detail/"]').first();
     const href = subA.attr('href');
     if (!href) return null;
 
+    const mId = href.match(/\/detail\/(\d+)\.html/);
+    if (!mId) return null;
+    const subId = mId[1];
+    const detailUrl = this.normalizeUrl(domain, href);
+
     const title = (subA.attr('title') || subA.text()).trim();
     if (!title) return null;
-
-    const mId = href.match(/\/detail\/(\d+)\.html/);
-    const subId = mId ? mId[1] : href.split('/').pop()?.replace('.html', '') || '';
-    const detailUrl = href.startsWith('http') ? href : `${domain}${href}`;
 
     let isCollection = false;
     if (isTv && meta.episode !== undefined) {
@@ -323,7 +326,7 @@ export class ZimukuProvider extends BaseProvider {
 
     // Extract language flags from all td.tac.lang img, td.tac img, td.first img
     $(tr).find('td.tac.lang img, td.tac img, td.first img').each((_, img) => {
-      const alt = `${$(img).attr('alt') || ''} ${$(img).attr('title') || ''}`.trim();
+      const alt = `${$(img).attr('alt') || ''} ${$(img).attr('title') || ''} ${$(img).attr('data-original-title') || ''}`.trim();
       if (alt.includes('双语') || alt.includes('雙語')) tags.bilingual = true;
       if (alt.includes('简体') || alt.includes('简中') || alt.toLowerCase().includes('chs')) {
         if (!tags.lang.includes('chs')) tags.lang.push('chs');
@@ -358,7 +361,8 @@ export class ZimukuProvider extends BaseProvider {
 
     // Rating
     let rate = 0;
-    const ratingStar = $(tr).find('i[class*="rating-star"], span[class*="rating-star"]').attr('title');
+    const ratingEl = $(tr).find('i[class*="rating-star"], span[class*="rating-star"]');
+    const ratingStar = ratingEl.attr('title') || ratingEl.attr('data-original-title') || '';
     if (ratingStar) {
       const m = ratingStar.match(/(\d+(?:\.\d+)?)/);
       if (m) rate = parseFloat(m[1]);
@@ -403,7 +407,7 @@ export class ZimukuProvider extends BaseProvider {
 
   public async parseWorksFromSearch(html: string, domain: string, meta: VideoQueryMeta): Promise<SubtitleCandidate[]> {
     const $ = cheerio.load(html);
-    const workDivs = $('div.item').slice(0, 3).toArray();
+    const workDivs = $('div.item').toArray();
     const candidates: SubtitleCandidate[] = [];
     const isTv = meta.mediaType === 'series' || meta.season !== undefined;
 
@@ -420,7 +424,7 @@ export class ZimukuProvider extends BaseProvider {
         if (workSeasons.size > 0 && !workSeasons.has(meta.season)) continue;
       }
 
-      const workUrl = workHref.startsWith('http') ? workHref : `${domain}${workHref}`;
+      const workUrl = this.normalizeUrl(domain, workHref);
       const workResp = await this.fetchPage(workUrl);
       if (!workResp) continue;
 
@@ -431,7 +435,10 @@ export class ZimukuProvider extends BaseProvider {
         (workHtml.includes(`imdb.com/title/${meta.imdbId}`) || workHtml.includes(meta.imdbId))
       );
       const subs = this.parseSubtitlesFromWork(workHtml, domain, meta, workImdbMatched);
-      candidates.push(...subs);
+      if (subs.length > 0) {
+        candidates.push(...subs);
+        break;
+      }
     }
 
     return candidates;
@@ -439,7 +446,7 @@ export class ZimukuProvider extends BaseProvider {
 
   public parseSubtitlesFromWork(html: string, domain: string, meta: VideoQueryMeta, workImdbMatched = false): SubtitleCandidate[] {
     const $ = cheerio.load(html);
-    const table = $('div.subs.box.clearfix tbody, div.subs.box.clearfix table, table.table tbody, table.table').first();
+    const table = $('table#subtb, div.subs.box.clearfix table').first();
     if (!table.length) return [];
 
     const candidates: SubtitleCandidate[] = [];
