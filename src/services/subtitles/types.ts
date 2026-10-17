@@ -57,4 +57,12 @@ export interface SubtitleConfig {
   source: 'all' | 'subhd' | 'zimuku';
   maxResults: number;
   proxy?: string;
+  showOriginal?: boolean;
+  keepOriginalFormat?: boolean;
+}
+
+export interface FormatSubtitleOptions {
+  langPref?: 'bilingual' | 'chs' | 'cht';
+  showOriginal?: boolean;
+  keepOriginalFormat?: boolean;
 }

@@ -64,7 +64,8 @@ export class SubtitleExtractor {
     originalFilename: string,
     episode?: number,
     preferBilingual = true,
-    preferTraditional = false
+    preferTraditional = false,
+    preferAss = false
   ): { buffer: Buffer; filename: string } | null {
     if (!contentBytes || contentBytes.length === 0) {
       return null;
@@ -90,7 +91,7 @@ export class SubtitleExtractor {
       try {
         const decompressed = zlib.gunzipSync(contentBytes);
         const cleanName = originalFilename.replace(/\.gz$/i, '');
-        return this.extractBestSubtitle(decompressed, cleanName, episode, preferBilingual, preferTraditional);
+        return this.extractBestSubtitle(decompressed, cleanName, episode, preferBilingual, preferTraditional, preferAss);
       } catch (err) {
         console.warn(`[Extractor] Gzip extraction failed:`, err);
       }
@@ -106,12 +107,12 @@ export class SubtitleExtractor {
       (contentBytes.length >= 2 && contentBytes[0] === 0x50 && contentBytes[1] === 0x4b) ||
       lowerName.endsWith('.zip')
     ) {
-      const zipRes = this.extractFromZip(contentBytes, episode, preferBilingual, preferTraditional);
+      const zipRes = this.extractFromZip(contentBytes, episode, preferBilingual, preferTraditional, preferAss);
       if (zipRes) return zipRes;
     }
 
     // Case 4: Generic Archive (.rar, .7z, .tar, etc.)
-    return this.extractGenericArchive(contentBytes, originalFilename, episode, preferBilingual, preferTraditional);
+    return this.extractGenericArchive(contentBytes, originalFilename, episode, preferBilingual, preferTraditional, preferAss);
   }
 
   public static isRawSubtitleBuffer(buf: Buffer): boolean {
@@ -146,7 +147,8 @@ export class SubtitleExtractor {
     contentBytes: Buffer,
     episode?: number,
     preferBilingual = true,
-    preferTraditional = false
+    preferTraditional = false,
+    preferAss = false
   ): { buffer: Buffer; filename: string } | null {
     try {
       const zip = new AdmZip(contentBytes);
@@ -172,7 +174,7 @@ export class SubtitleExtractor {
       }
 
       if (Object.keys(filesMap).length > 0) {
-        const bestName = this.pickBestFile(Object.keys(filesMap), episode, preferBilingual, preferTraditional);
+        const bestName = this.pickBestFile(Object.keys(filesMap), episode, preferBilingual, preferTraditional, preferAss);
         if (bestName && filesMap[bestName]) {
           return { buffer: filesMap[bestName], filename: bestName };
         }
@@ -180,9 +182,9 @@ export class SubtitleExtractor {
 
       // Check for nested archives inside zip (e.g. season pack with per-episode zips)
       if (Object.keys(nestedMap).length > 0) {
-        const bestArchive = this.pickBestFile(Object.keys(nestedMap), episode, preferBilingual, preferTraditional);
+        const bestArchive = this.pickBestFile(Object.keys(nestedMap), episode, preferBilingual, preferTraditional, preferAss);
         if (bestArchive && nestedMap[bestArchive]) {
-          return this.extractBestSubtitle(nestedMap[bestArchive], bestArchive, episode, preferBilingual, preferTraditional);
+          return this.extractBestSubtitle(nestedMap[bestArchive], bestArchive, episode, preferBilingual, preferTraditional, preferAss);
         }
       }
     } catch (err) {
@@ -196,7 +198,8 @@ export class SubtitleExtractor {
     originalFilename: string,
     episode?: number,
     preferBilingual = true,
-    preferTraditional = false
+    preferTraditional = false,
+    preferAss = false
   ): { buffer: Buffer; filename: string } | null {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'strem_zhsub_'));
     const archivePath = path.join(tempDir, originalFilename || 'archive.bin');
@@ -245,7 +248,7 @@ export class SubtitleExtractor {
         walk(extractDest);
 
         if (Object.keys(foundFiles).length > 0) {
-          const bestName = this.pickBestFile(Object.keys(foundFiles), episode, preferBilingual, preferTraditional);
+          const bestName = this.pickBestFile(Object.keys(foundFiles), episode, preferBilingual, preferTraditional, preferAss);
           if (bestName && foundFiles[bestName]) {
             const buf = fs.readFileSync(foundFiles[bestName]);
             return { buffer: buf, filename: bestName };
@@ -253,10 +256,10 @@ export class SubtitleExtractor {
         }
 
         if (Object.keys(nestedArchives).length > 0) {
-          const bestArchive = this.pickBestFile(Object.keys(nestedArchives), episode, preferBilingual, preferTraditional);
+          const bestArchive = this.pickBestFile(Object.keys(nestedArchives), episode, preferBilingual, preferTraditional, preferAss);
           if (bestArchive && nestedArchives[bestArchive]) {
             const buf = fs.readFileSync(nestedArchives[bestArchive]);
-            return this.extractBestSubtitle(buf, bestArchive, episode, preferBilingual, preferTraditional);
+            return this.extractBestSubtitle(buf, bestArchive, episode, preferBilingual, preferTraditional, preferAss);
           }
         }
       }
@@ -277,7 +280,8 @@ export class SubtitleExtractor {
     filenames: string[],
     episode?: number,
     preferBilingual = true,
-    preferTraditional = false
+    preferTraditional = false,
+    preferAss = false
   ): string | null {
     if (!filenames || filenames.length === 0) {
       return null;
@@ -285,7 +289,8 @@ export class SubtitleExtractor {
 
     const chsPat = /chs|gb|sc|简|简体|简中|zh-cn|zh-hans|chi|zho/i;
     const chtPat = /cht|tc|big5|繁|繁体|繁體|繁中|zh-tw|zh-hk|zh-hant/i;
-    const engOnlyPat = /(?:^|[._ -])(?:eng?|english|英文)[._ -]*(?:srt|ass|ssa|vtt)$/i;
+    const nonZhTagOnlyPat = /^(?:eng?|english|英文|英语|fre|fra|french|法语|德语|ger|deu|spa|esp|rus|jpn|jap|kor|ita|por)$/i;
+    const engOnlyFilePat = /(?:^|[._ -])(?:eng?|english|英文|英语)[._ -]*(?:srt|ass|ssa|vtt)$/i;
 
     const scoreFile = (filename: string): [number, number, number] => {
       const lower = filename.toLowerCase();
@@ -325,10 +330,10 @@ export class SubtitleExtractor {
       const parts = stem.split(/[._ -]+/);
       const lastTag = parts.length > 0 ? parts[parts.length - 1].trim().toLowerCase() : '';
 
-      const isEngOnlyTag = engOnlyPat.test(lastTag);
       const isBilingual = BILINGUAL_REGEX.test(lastTag) || BILINGUAL_REGEX.test(lower);
       const isCht = chtPat.test(lastTag) || chtPat.test(lower);
       const isChs = chsPat.test(lastTag) || chsPat.test(lower);
+      const isEngOnlyTag = nonZhTagOnlyPat.test(lastTag) || (engOnlyFilePat.test(lower) && !isBilingual && !isChs && !isCht);
 
       let langScore = 400;
       if (isEngOnlyTag) {
@@ -349,12 +354,14 @@ export class SubtitleExtractor {
 
       // 3. Format score
       let fmtScore = 0;
-      if (lower.endsWith('.srt')) {
-        fmtScore = 50;
-      } else if (lower.endsWith('.ass') || lower.endsWith('.ssa')) {
-        fmtScore = 40;
-      } else if (lower.endsWith('.vtt')) {
-        fmtScore = 20;
+      if (preferAss) {
+        if (lower.endsWith('.ass') || lower.endsWith('.ssa')) fmtScore = 60;
+        else if (lower.endsWith('.srt')) fmtScore = 50;
+        else if (lower.endsWith('.vtt')) fmtScore = 20;
+      } else {
+        if (lower.endsWith('.srt')) fmtScore = 50;
+        else if (lower.endsWith('.ass') || lower.endsWith('.ssa')) fmtScore = 40;
+        else if (lower.endsWith('.vtt')) fmtScore = 20;
       }
 
       return [epScore, langScore, fmtScore];

@@ -82,6 +82,32 @@ export class SubtitleCleaner {
     return Buffer.from(cleanedSrt, 'utf-8');
   }
 
+  public static normalizeToUtf8Original(rawBytes: Buffer, filename = ''): { buffer: Buffer; ext: string } {
+    const { text } = this.detectAndDecode(rawBytes);
+    const lowerName = filename.toLowerCase();
+    let ext = 'srt';
+    if (lowerName.endsWith('.ass') || text.includes('[Script Info]') || text.includes('ScriptType: v4.00+')) {
+      ext = 'ass';
+    } else if (lowerName.endsWith('.ssa') || text.includes('ScriptType: v4.00')) {
+      ext = 'ssa';
+    } else if (lowerName.endsWith('.vtt') || text.trim().startsWith('WEBVTT')) {
+      ext = 'vtt';
+    }
+    const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim() + '\n';
+    return { buffer: Buffer.from(normalized, 'utf-8'), ext };
+  }
+
+  public static isValidSubtitleContent(text: string): boolean {
+    if (!text || text.length < 20) return false;
+    return (
+      text.includes('-->') ||
+      text.includes('[Script Info]') ||
+      text.includes('[Events]') ||
+      text.includes('Dialogue:') ||
+      text.includes('WEBVTT')
+    );
+  }
+
   public static assTimeToSrtTime(assTime: string): string {
     const parts = assTime.trim().split(':');
     let hours = 0;

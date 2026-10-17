@@ -12,12 +12,16 @@ describe('HTTP Routes & Stremio Addon Protocol', () => {
     delete process.env.SUBTITLE_SOURCE;
     delete process.env.SUBTITLE_MAX_RESULTS;
     delete process.env.SUBTITLE_PROXY;
+    delete process.env.SUBTITLE_SHOW_ORIGINAL;
+    delete process.env.SUBTITLE_KEEP_ORIGINAL_FORMAT;
     saveConfigToEnv({
       SUBTITLE_ENABLED: 'true',
       SUBTITLE_LANG: 'bilingual',
       SUBTITLE_SOURCE: 'all',
       SUBTITLE_MAX_RESULTS: '8',
-      SUBTITLE_PROXY: ''
+      SUBTITLE_PROXY: '',
+      SUBTITLE_SHOW_ORIGINAL: 'false',
+      SUBTITLE_KEEP_ORIGINAL_FORMAT: 'false'
     });
   });
 
@@ -75,7 +79,9 @@ describe('HTTP Routes & Stremio Addon Protocol', () => {
         subtitleLang: 'chs',
         subtitleSource: 'zimuku',
         subtitleMaxResults: 5,
-        subtitleProxy: 'http://127.0.0.1:7890'
+        subtitleProxy: 'http://127.0.0.1:7890',
+        subtitleShowOriginal: true,
+        subtitleKeepOriginalFormat: true
       });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -84,5 +90,13 @@ describe('HTTP Routes & Stremio Addon Protocol', () => {
     expect(process.env.SUBTITLE_SOURCE).toBe('zimuku');
     expect(process.env.SUBTITLE_MAX_RESULTS).toBe('5');
     expect(process.env.SUBTITLE_PROXY).toBe('http://127.0.0.1:7890');
+    expect(process.env.SUBTITLE_SHOW_ORIGINAL).toBe('true');
+    expect(process.env.SUBTITLE_KEEP_ORIGINAL_FORMAT).toBe('true');
+
+    // Verify GET /configure reflects the checked status
+    const getRes = await request(app).get('/configure');
+    expect(getRes.status).toBe(200);
+    expect(getRes.text).toContain('id="subtitleShowOriginal" checked');
+    expect(getRes.text).toContain('id="subtitleKeepOriginalFormat" checked');
   });
 });

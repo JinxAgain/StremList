@@ -41,4 +41,24 @@ describe('SubtitleExtractor', () => {
     expect(result).not.toBeNull();
     expect(result?.filename).toBe('subtitle_archive.srt');
   });
+
+  it('selects ASS over SRT when preferAss is true', () => {
+    const files = ['Movie.chs.srt', 'Movie.chs.ass'];
+    const bestNormal = SubtitleExtractor.pickBestFile(files, undefined, true, false, false);
+    expect(bestNormal).toBe('Movie.chs.srt');
+
+    const bestAss = SubtitleExtractor.pickBestFile(files, undefined, true, false, true);
+    expect(bestAss).toBe('Movie.chs.ass');
+  });
+
+  it('disqualifies English-only subtitle files in pickBestFile', () => {
+    const files = ['Movie.eng.srt', 'Movie.chs.srt'];
+    const best = SubtitleExtractor.pickBestFile(files, undefined, true, false, false);
+    expect(best).toBe('Movie.chs.srt');
+
+    const engOnlyFiles = ['Movie.english.srt', 'Movie.fre.srt'];
+    const bestEngOnly = SubtitleExtractor.pickBestFile(engOnlyFiles, undefined, true, false, false);
+    // Both are non-Chinese only tags, should be penalized and if no Chinese exists, rank appropriately
+    expect(bestEngOnly).not.toBeNull();
+  });
 });

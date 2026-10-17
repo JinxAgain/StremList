@@ -1,5 +1,6 @@
 import { SubtitleCandidate, VideoQueryMeta } from '../types.js';
 import { extractSeasonsFromText } from '../providers/base.js';
+import { SubhdProvider } from '../providers/subhd.js';
 
 export class SubtitleScorer {
   public static rankCandidates(
@@ -47,6 +48,17 @@ export class SubtitleScorer {
     let score = 0.0;
     const titleLower = (candidate.title || '').toLowerCase();
     const isTv = query.mediaType === 'series' || query.season !== undefined;
+
+    if (candidate.provider === 'subhd' && SubhdProvider.isRateLimited()) {
+      score -= 2000.0;
+    }
+
+    if (
+      candidate.tags.fmt.length > 0 &&
+      !candidate.tags.fmt.some((f) => ['srt', 'ass', 'ssa', 'vtt'].includes(f.toLowerCase()))
+    ) {
+      score -= 2000.0;
+    }
 
     // 1. Season conflict check for TV series
     let hasSeasonConflict = false;
@@ -170,6 +182,8 @@ export class SubtitleScorer {
     for (const src of tags.source) {
       const sLower = src.toLowerCase();
       if (/official|官方|官译/.test(sLower)) score += 100.0;
+      else if (/ai|ai校对|ai润色|ai翻译/.test(sLower)) score += 40.0;
+      else if (/machine|机器翻译|机翻/.test(sLower)) score -= 50.0;
       else if (/reprint|精修|转载精修/.test(sLower)) score += 80.0;
       else if (/original|原创/.test(sLower)) score += 60.0;
     }

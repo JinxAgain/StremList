@@ -8,6 +8,8 @@ describe('AppConfig Subtitle Settings', () => {
     expect(cfg.subtitleLang).toBe('bilingual');
     expect(cfg.subtitleSource).toBe('all');
     expect(cfg.subtitleMaxResults).toBe(8);
+    expect(cfg.subtitleShowOriginal).toBe(false);
+    expect(cfg.subtitleKeepOriginalFormat).toBe(false);
   });
 
   it('parses base64 encoded subtitle configuration override', () => {
@@ -15,7 +17,9 @@ describe('AppConfig Subtitle Settings', () => {
       subtitleEnabled: false,
       subtitleLang: 'chs' as const,
       subtitleSource: 'zimuku' as const,
-      subtitleMaxResults: 5
+      subtitleMaxResults: 5,
+      subtitleShowOriginal: true,
+      subtitleKeepOriginalFormat: true
     };
     const b64 = Buffer.from(JSON.stringify(customConfig)).toString('base64url');
     const cfg = loadConfig(b64);
@@ -23,5 +27,7 @@ describe('AppConfig Subtitle Settings', () => {
     expect(cfg.subtitleLang).toBe('chs');
     expect(cfg.subtitleSource).toBe('zimuku');
     expect(cfg.subtitleMaxResults).toBe(5);
+    expect(cfg.subtitleShowOriginal).toBe(true);
+    expect(cfg.subtitleKeepOriginalFormat).toBe(true);
   });
 });

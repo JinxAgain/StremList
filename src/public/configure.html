@@ -284,6 +284,22 @@
         <input type="checkbox" id="subtitleEnabled" checked style="width: 20px; height: 20px; cursor: pointer; accent-color: var(--primary);">
       </div>
 
+      <div class="form-group" style="display: flex; align-items: center; justify-content: space-between; padding: 12px; background: rgba(15, 23, 42, 0.4); border-radius: 10px; border: 1px solid var(--border);">
+        <div>
+          <label for="subtitleShowOriginal" style="margin-bottom: 0; cursor: pointer;">显示字幕原名 (Show Original Subtitle Name)</label>
+          <div class="help-text">开启后直接显示字幕站原始标题，如：[简][官译]蜘蛛侠：崭新之日...[SubHD]</div>
+        </div>
+        <input type="checkbox" id="subtitleShowOriginal" style="width: 20px; height: 20px; cursor: pointer; accent-color: var(--primary);">
+      </div>
+
+      <div class="form-group" style="display: flex; align-items: center; justify-content: space-between; padding: 12px; background: rgba(15, 23, 42, 0.4); border-radius: 10px; border: 1px solid var(--border);">
+        <div>
+          <label for="subtitleKeepOriginalFormat" style="margin-bottom: 0; cursor: pointer;">保留原始字幕格式 (Keep Original ASS/SSA Format)</label>
+          <div class="help-text">开启后保留 ASS/SSA 等特效字幕原始格式，不强制转换为 SRT</div>
+        </div>
+        <input type="checkbox" id="subtitleKeepOriginalFormat" style="width: 20px; height: 20px; cursor: pointer; accent-color: var(--primary);">
+      </div>
+
       <div class="form-group">
         <label for="subtitleLang">默认字幕语言 (Preferred Language)</label>
         <select id="subtitleLang">
@@ -342,6 +358,8 @@
         torrentioUrl: document.getElementById('torrentioUrl').value.trim(),
         cometUrl: document.getElementById('cometUrl').value.trim(),
         subtitleEnabled: document.getElementById('subtitleEnabled') ? document.getElementById('subtitleEnabled').checked : true,
+        subtitleShowOriginal: document.getElementById('subtitleShowOriginal') ? document.getElementById('subtitleShowOriginal').checked : false,
+        subtitleKeepOriginalFormat: document.getElementById('subtitleKeepOriginalFormat') ? document.getElementById('subtitleKeepOriginalFormat').checked : false,
         subtitleLang: document.getElementById('subtitleLang') ? document.getElementById('subtitleLang').value : 'bilingual',
         subtitleSource: document.getElementById('subtitleSource') ? document.getElementById('subtitleSource').value : 'all',
         subtitleMaxResults: document.getElementById('subtitleMaxResults') ? parseInt(document.getElementById('subtitleMaxResults').value, 10) : 8,

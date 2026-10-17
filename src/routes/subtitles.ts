@@ -105,11 +105,13 @@ export async function handleSubtitlesRequest(
   const langPref = appConfig.subtitleLang || 'bilingual';
   const sourcePref = appConfig.subtitleSource || 'all';
   const maxResults = appConfig.subtitleMaxResults || 8;
+  const showOriginal = Boolean(appConfig.subtitleShowOriginal);
+  const keepOriginalFormat = Boolean(appConfig.subtitleKeepOriginalFormat);
 
   const queryMeta = parseMediaId(mediaType, idStr, extra);
   const baseUrl = getPublicBaseUrl(req);
 
-  const cacheKey = `${queryMeta.mediaType}:${queryMeta.imdbId}:${queryMeta.season ?? 0}:${queryMeta.episode ?? 0}:${langPref}:${sourcePref}:${maxResults}`;
+  const cacheKey = `${queryMeta.mediaType}:${queryMeta.imdbId}:${queryMeta.season ?? 0}:${queryMeta.episode ?? 0}:${langPref}:${sourcePref}:${maxResults}${showOriginal ? ':orig' : ''}${keepOriginalFormat ? ':rawfmt' : ''}`;
 
   // Check search cache
   const cached = cacheManager.getSearchResults(cacheKey);
@@ -187,8 +189,13 @@ export async function handleSubtitlesRequest(
     const subtitles: SubtitleItem[] = [];
     for (const cand of ranked) {
       const epNum = queryMeta.episode ?? 0;
-      const { label, filename } = formatSubtitleInfo(cand, queryMeta);
-      const relPath = `/subtitles/dl/${cand.provider}/${cand.id}/${epNum}/${filename}`;
+      const { label, filename, format } = formatSubtitleInfo(cand, queryMeta, {
+        langPref,
+        showOriginal,
+        keepOriginalFormat
+      });
+      const rawQuery = keepOriginalFormat ? '?raw=1' : '';
+      const relPath = `/subtitles/dl/${cand.provider}/${cand.id}/${epNum}/${filename}${rawQuery}`;
 
       subtitles.push({
         id: `${cand.provider}_${cand.id}_${epNum}`,
@@ -197,7 +204,7 @@ export async function handleSubtitlesRequest(
         label,
         subtitleFileName: filename,
         movieReleaseName: filename.replace(/\.[^.]+$/, ''),
-        SubFormat: 'srt',
+        SubFormat: format || (keepOriginalFormat ? 'ass' : 'srt'),
         path: relPath
       });
     }
@@ -222,7 +229,18 @@ export async function handleDownloadSubtitle(req: Request, res: Response) {
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS, HEAD');
   res.setHeader('Access-Control-Allow-Headers', '*');
 
-  const cacheFilename = `${provider}_${subId}_${episodeNum}.srt`;
+  const appConfig = loadConfig();
+  const keepOriginal =
+    req.query.raw === '1' ||
+    Boolean(appConfig.subtitleKeepOriginalFormat) ||
+    /\.(ass|ssa|vtt)$/i.test(filename);
+  const langPref = appConfig.subtitleLang || 'bilingual';
+
+  const extMatch = filename.match(/\.(srt|ass|ssa|vtt)$/i);
+  const reqExt = extMatch ? extMatch[1].toLowerCase() : 'srt';
+  const cacheFilename = keepOriginal
+    ? `${provider}_${subId}_${episodeNum}_orig.${reqExt}`
+    : `${provider}_${subId}_${episodeNum}.srt`;
 
   // 1. Fast path: disk cache hit
   if (cacheManager.hasSubtitle(cacheFilename)) {
@@ -267,6 +285,10 @@ export async function handleDownloadSubtitle(req: Request, res: Response) {
   let subBytes: Buffer | null = null;
   let subName = rawFilename;
 
+  const preferBilingual = langPref === 'bilingual';
+  const preferTraditional = langPref === 'cht';
+  const preferAss = keepOriginal;
+
   // 3. Direct subtitle vs archive unpack
   if (
     SUBTITLE_EXTENSIONS.some((ext) => rawFilename.toLowerCase().endsWith(ext)) ||
@@ -274,7 +296,14 @@ export async function handleDownloadSubtitle(req: Request, res: Response) {
   ) {
     subBytes = archiveBytes;
   } else {
-    const extracted = SubtitleExtractor.extractBestSubtitle(archiveBytes, rawFilename, targetEp);
+    const extracted = SubtitleExtractor.extractBestSubtitle(
+      archiveBytes,
+      rawFilename,
+      targetEp,
+      preferBilingual,
+      preferTraditional,
+      preferAss
+    );
     if (!extracted) {
       return res.status(502).send('Failed to extract subtitle from archive');
     }
@@ -282,19 +311,28 @@ export async function handleDownloadSubtitle(req: Request, res: Response) {
     subName = extracted.filename;
   }
 
-  // 4. Normalize to clean UTF-8 SRT
-  const cleanedSrt = SubtitleCleaner.normalizeToUtf8Srt(subBytes, subName);
-  if (cleanedSrt.length < 20 || !cleanedSrt.toString('utf-8').includes('-->')) {
-    return res.status(502).send('Subtitle normalization resulted in invalid SRT format');
+  // 4. Normalize
+  let outputBuffer: Buffer;
+  if (keepOriginal) {
+    const orig = SubtitleCleaner.normalizeToUtf8Original(subBytes, subName);
+    outputBuffer = orig.buffer;
+    if (!SubtitleCleaner.isValidSubtitleContent(outputBuffer.toString('utf-8'))) {
+      return res.status(502).send('Subtitle normalization resulted in invalid original subtitle format');
+    }
+  } else {
+    outputBuffer = SubtitleCleaner.normalizeToUtf8Srt(subBytes, subName);
+    if (!SubtitleCleaner.isValidSubtitleContent(outputBuffer.toString('utf-8'))) {
+      return res.status(502).send('Subtitle normalization resulted in invalid SRT format');
+    }
   }
 
   // 5. Save to disk cache
-  cacheManager.saveSubtitle(cacheFilename, cleanedSrt);
+  cacheManager.saveSubtitle(cacheFilename, outputBuffer);
 
   // 6. Stream to player
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Cache-Control', 'public, max-age=86400');
-  return res.send(cleanedSrt);
+  return res.send(outputBuffer);
 }
 
 // OPTIONS pre-flight

@@ -20,6 +20,8 @@ export interface AppConfig {
   subtitleSource: 'all' | 'subhd' | 'zimuku';
   subtitleMaxResults: number;
   subtitleProxy?: string;
+  subtitleShowOriginal: boolean;
+  subtitleKeepOriginalFormat: boolean;
 }
 
 const DEFAULT_CONFIG: AppConfig = {
@@ -35,7 +37,9 @@ const DEFAULT_CONFIG: AppConfig = {
   subtitleLang: 'bilingual',
   subtitleSource: 'all',
   subtitleMaxResults: 8,
-  subtitleProxy: ''
+  subtitleProxy: '',
+  subtitleShowOriginal: false,
+  subtitleKeepOriginalFormat: false
 };
 
 function cleanUrl(url?: string): string {
@@ -83,7 +87,9 @@ export function loadConfig(rawConfigStr?: string): AppConfig {
     subtitleLang: (process.env.SUBTITLE_LANG as 'bilingual' | 'chs' | 'cht') || DEFAULT_CONFIG.subtitleLang,
     subtitleSource: (process.env.SUBTITLE_SOURCE as 'all' | 'subhd' | 'zimuku') || DEFAULT_CONFIG.subtitleSource,
     subtitleMaxResults: Number(process.env.SUBTITLE_MAX_RESULTS) || DEFAULT_CONFIG.subtitleMaxResults,
-    subtitleProxy: process.env.SUBTITLE_PROXY?.trim() || DEFAULT_CONFIG.subtitleProxy
+    subtitleProxy: process.env.SUBTITLE_PROXY?.trim() || DEFAULT_CONFIG.subtitleProxy,
+    subtitleShowOriginal: process.env.SUBTITLE_SHOW_ORIGINAL === 'true',
+    subtitleKeepOriginalFormat: process.env.SUBTITLE_KEEP_ORIGINAL_FORMAT === 'true'
   };
 
   if (!rawConfigStr) {
@@ -130,7 +136,9 @@ export function loadConfig(rawConfigStr?: string): AppConfig {
       subtitleLang: parsed.subtitleLang || envConfig.subtitleLang,
       subtitleSource: parsed.subtitleSource || envConfig.subtitleSource,
       subtitleMaxResults: Number(parsed.subtitleMaxResults) || envConfig.subtitleMaxResults,
-      subtitleProxy: parsed.subtitleProxy !== undefined ? parsed.subtitleProxy : envConfig.subtitleProxy
+      subtitleProxy: parsed.subtitleProxy !== undefined ? parsed.subtitleProxy : envConfig.subtitleProxy,
+      subtitleShowOriginal: parsed.subtitleShowOriginal !== undefined ? Boolean(parsed.subtitleShowOriginal) : envConfig.subtitleShowOriginal,
+      subtitleKeepOriginalFormat: parsed.subtitleKeepOriginalFormat !== undefined ? Boolean(parsed.subtitleKeepOriginalFormat) : envConfig.subtitleKeepOriginalFormat
     };
   } catch (error) {
     // If decoding or parsing fails, safely fallback to env config
@@ -152,6 +160,8 @@ export function encodeConfig(config: Partial<AppConfig>): string {
   if (config.subtitleSource) cleanConfig.subtitleSource = config.subtitleSource;
   if (config.subtitleMaxResults) cleanConfig.subtitleMaxResults = config.subtitleMaxResults;
   if (config.subtitleProxy) cleanConfig.subtitleProxy = config.subtitleProxy.trim();
+  if (config.subtitleShowOriginal !== undefined) cleanConfig.subtitleShowOriginal = config.subtitleShowOriginal;
+  if (config.subtitleKeepOriginalFormat !== undefined) cleanConfig.subtitleKeepOriginalFormat = config.subtitleKeepOriginalFormat;
 
   return Buffer.from(JSON.stringify(cleanConfig)).toString('base64url');
 }

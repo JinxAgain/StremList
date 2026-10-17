@@ -1,5 +1,15 @@
 import * as cheerio from 'cheerio';
-import { BaseProvider, isEpisodeMatch, extractSeasonsFromText, toCnSeason, extractMetaFromFilename, extractFilenameFromResponse } from './base.js';
+import {
+  BaseProvider,
+  isEpisodeMatch,
+  extractSeasonsFromText,
+  toCnSeason,
+  extractMetaFromFilename,
+  extractFilenameFromResponse,
+  parseSourceTagsFromText,
+  parseLangAndBilingualFromText,
+  hasChineseSubtitle
+} from './base.js';
 import { ZimukuBmpSolver } from './zimuku-solver.js';
 import { SubtitleCandidate, SubtitleTags, VideoQueryMeta } from '../types.js';
 
@@ -201,9 +211,9 @@ export class ZimukuProvider extends BaseProvider {
         const html = resp.data.toString();
         let newFound = 0;
 
-        // 1. Direct table
-        const tableItems = this.parseSubtitlesFromTable(html, domain, meta);
-        for (const sub of tableItems) {
+        // 1. Prioritize Zimuku work cards (/subs/xxxxx.html)
+        const workItems = await this.parseWorksFromSearch(html, domain, meta);
+        for (const sub of workItems) {
           if (isImdb) sub.tags.imdbMatched = true;
           if (!seenIds.has(sub.id)) {
             seenIds.add(sub.id);
@@ -212,14 +222,16 @@ export class ZimukuProvider extends BaseProvider {
           }
         }
 
-        // 2. Work cards
-        const workItems = await this.parseWorksFromSearch(html, domain, meta);
-        for (const sub of workItems) {
-          if (isImdb) sub.tags.imdbMatched = true;
-          if (!seenIds.has(sub.id)) {
-            seenIds.add(sub.id);
-            candidates.push(sub);
-            newFound++;
+        // 2. Fallback to direct subtitle table if no work items found
+        if (workItems.length === 0) {
+          const tableItems = this.parseSubtitlesFromTable(html, domain, meta);
+          for (const sub of tableItems) {
+            if (isImdb) sub.tags.imdbMatched = true;
+            if (!seenIds.has(sub.id)) {
+              seenIds.add(sub.id);
+              candidates.push(sub);
+              newFound++;
+            }
           }
         }
 
@@ -272,93 +284,131 @@ export class ZimukuProvider extends BaseProvider {
     return Array.from(new Set(queries.map((q) => q.trim()).filter(Boolean)));
   }
 
-  private parseSubtitlesFromTable(html: string, domain: string, meta: VideoQueryMeta): SubtitleCandidate[] {
+  private parseSubtitleRow(
+    $: cheerio.CheerioAPI,
+    tr: any,
+    domain: string,
+    meta: VideoQueryMeta,
+    workImdbMatched = false
+  ): SubtitleCandidate | null {
+    const isTv = meta.mediaType === 'series' || meta.season !== undefined;
+    const firstTd = $(tr).find('td.first');
+    const subA = (firstTd.length ? firstTd.find('a').first() : $(tr).find('a[href*="/detail/"]').first()) || $(tr).find('a').first();
+    const href = subA.attr('href');
+    if (!href) return null;
+
+    const title = (subA.attr('title') || subA.text()).trim();
+    if (!title) return null;
+
+    const mId = href.match(/\/detail\/(\d+)\.html/);
+    const subId = mId ? mId[1] : href.split('/').pop()?.replace('.html', '') || '';
+    const detailUrl = href.startsWith('http') ? href : `${domain}${href}`;
+
+    let isCollection = false;
+    if (isTv && meta.episode !== undefined) {
+      const [matches, col] = isEpisodeMatch(title, meta.season, meta.episode);
+      if (!matches) return null;
+      isCollection = col;
+    }
+
+    const tags: SubtitleTags = {
+      provider: this.name,
+      lang: [],
+      bilingual: false,
+      fmt: [],
+      source: [],
+      collection: isCollection,
+      imdbMatched: workImdbMatched
+    };
+
+    // Extract language flags from all td.tac.lang img, td.tac img, td.first img
+    $(tr).find('td.tac.lang img, td.tac img, td.first img').each((_, img) => {
+      const alt = `${$(img).attr('alt') || ''} ${$(img).attr('title') || ''}`.trim();
+      if (alt.includes('双语') || alt.includes('雙語')) tags.bilingual = true;
+      if (alt.includes('简体') || alt.includes('简中') || alt.toLowerCase().includes('chs')) {
+        if (!tags.lang.includes('chs')) tags.lang.push('chs');
+      }
+      if (alt.includes('繁体') || alt.includes('繁體') || alt.includes('繁中') || alt.toLowerCase().includes('cht')) {
+        if (!tags.lang.includes('cht')) tags.lang.push('cht');
+      }
+    });
+
+    parseLangAndBilingualFromText(title, tags);
+    if (!hasChineseSubtitle(tags)) return null;
+
+    // Extract format badges
+    $(tr).find('span.label-info').each((_, span) => {
+      const text = $(span).text().trim().toLowerCase();
+      text.split('/').forEach((f) => {
+        const fc = f.trim();
+        if (fc && !tags.fmt.includes(fc)) tags.fmt.push(fc);
+      });
+    });
+
+    for (const fmt of ['ass', 'srt', 'ssa', 'vtt', 'sup']) {
+      if (title.toLowerCase().endsWith('.' + fmt) && !tags.fmt.includes(fmt)) {
+        tags.fmt.push(fmt);
+      }
+    }
+
+    // Extract translation source badges
+    const firstTdText = $(tr).find('td.first').text();
+    parseSourceTagsFromText(firstTdText, tags.source);
+    parseSourceTagsFromText(title, tags.source);
+
+    // Rating
+    let rate = 0;
+    const ratingStar = $(tr).find('i[class*="rating-star"], span[class*="rating-star"]').attr('title');
+    if (ratingStar) {
+      const m = ratingStar.match(/(\d+(?:\.\d+)?)/);
+      if (m) rate = parseFloat(m[1]);
+    }
+
+    // Download count (pure number or "1234次", excluding uploader/time cells)
+    let downloadsCount = 0;
+    $(tr).find('td.tac, td.last').each((_, td) => {
+      if ($(td).find('img, a[href*="/u/"], span.glyphicon').length > 0) return;
+      const txt = $(td).text().trim();
+      const m = txt.match(/^(\d+)\s*次?$/);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (n > downloadsCount) downloadsCount = n;
+      }
+    });
+
+    return {
+      id: subId,
+      provider: 'zimuku',
+      title,
+      pageUrl: detailUrl,
+      tags,
+      rate,
+      downloadsCount,
+      score: 0
+    };
+  }
+
+  public parseSubtitlesFromTable(html: string, domain: string, meta: VideoQueryMeta): SubtitleCandidate[] {
     const $ = cheerio.load(html);
     const table = $('table.tborder2').first().length ? $('table.tborder2').first() : $('table.table').first();
     if (!table.length) return [];
 
     const candidates: SubtitleCandidate[] = [];
-    const isTv = meta.mediaType === 'series' || meta.season !== undefined;
-
     table.find('tr').each((_, tr) => {
-      const firstTd = $(tr).find('td.first');
-      if (!firstTd.length) return;
-
-      const subA = firstTd.find('a').first();
-      const href = subA.attr('href');
-      if (!href) return;
-
-      const title = subA.attr('title') || subA.text().trim();
-      const mId = href.match(/\/detail\/(\d+)\.html/);
-      const subId = mId ? mId[1] : href.split('/').pop()?.replace('.html', '') || '';
-      const detailUrl = `${domain}/detail/${subId}.html`;
-
-      let isCollection = false;
-      if (isTv && meta.episode !== undefined) {
-        const [matches, col] = isEpisodeMatch(title, meta.season, meta.episode);
-        if (!matches) return;
-        isCollection = col;
-      }
-
-      const tags: SubtitleTags = {
-        provider: this.name,
-        lang: [],
-        bilingual: false,
-        fmt: [],
-        source: [],
-        collection: isCollection,
-        imdbMatched: false
-      };
-
-      const imgs = firstTd.find('img').toArray();
-      const tacTd = $(tr).find('td.tac');
-      if (tacTd.length) imgs.push(...tacTd.find('img').toArray());
-
-      for (const img of imgs) {
-        const alt = `${$(img).attr('alt') || ''} ${$(img).attr('title') || ''}`;
-        if (alt.includes('双语')) tags.bilingual = true;
-        if (alt.includes('简体') || alt.toLowerCase().includes('chs')) {
-          if (!tags.lang.includes('chs')) tags.lang.push('chs');
-        }
-        if (alt.includes('繁体') || alt.toLowerCase().includes('cht')) {
-          if (!tags.lang.includes('cht')) tags.lang.push('cht');
-        }
-      }
-
-      if (title.includes('双语') || title.includes('中英')) tags.bilingual = true;
-      if (tags.lang.length === 0) tags.lang.push('chs');
-
-      const fmtSpan = firstTd.find('span.label-info');
-      if (fmtSpan.length) {
-        fmtSpan.text().trim().toLowerCase().split('/').forEach((f) => {
-          const fc = f.trim();
-          if (fc && !tags.fmt.includes(fc)) tags.fmt.push(fc);
-        });
-      }
-
-      candidates.push({
-        id: subId,
-        provider: 'zimuku',
-        title,
-        pageUrl: detailUrl,
-        tags,
-        rate: 0,
-        downloadsCount: 0,
-        score: 0
-      });
+      const cand = this.parseSubtitleRow($, tr, domain, meta, false);
+      if (cand) candidates.push(cand);
     });
-
     return candidates;
   }
 
-  private async parseWorksFromSearch(html: string, domain: string, meta: VideoQueryMeta): Promise<SubtitleCandidate[]> {
+  public async parseWorksFromSearch(html: string, domain: string, meta: VideoQueryMeta): Promise<SubtitleCandidate[]> {
     const $ = cheerio.load(html);
     const workDivs = $('div.item').slice(0, 3).toArray();
     const candidates: SubtitleCandidate[] = [];
     const isTv = meta.mediaType === 'series' || meta.season !== undefined;
 
     for (const div of workDivs) {
-      const a = $(div).find('div.title p.tt a').first();
+      const a = $(div).find('div.title p.tt a, a[href*="/subs/"]').first();
       if (!a.length) continue;
 
       const workTitle = a.text().trim();
@@ -375,63 +425,28 @@ export class ZimukuProvider extends BaseProvider {
       if (!workResp) continue;
 
       const workHtml = workResp.data.toString();
-      const subs = this.parseSubtitlesFromWork(workHtml, domain, meta);
+      const workImdbMatched = Boolean(
+        meta.imdbId &&
+        meta.imdbId.startsWith('tt') &&
+        (workHtml.includes(`imdb.com/title/${meta.imdbId}`) || workHtml.includes(meta.imdbId))
+      );
+      const subs = this.parseSubtitlesFromWork(workHtml, domain, meta, workImdbMatched);
       candidates.push(...subs);
     }
 
     return candidates;
   }
 
-  private parseSubtitlesFromWork(html: string, domain: string, meta: VideoQueryMeta): SubtitleCandidate[] {
+  public parseSubtitlesFromWork(html: string, domain: string, meta: VideoQueryMeta, workImdbMatched = false): SubtitleCandidate[] {
     const $ = cheerio.load(html);
-    const table = $('div.subs.box.clearfix tbody').first();
+    const table = $('div.subs.box.clearfix tbody, div.subs.box.clearfix table, table.table tbody, table.table').first();
     if (!table.length) return [];
 
     const candidates: SubtitleCandidate[] = [];
-    const isTv = meta.mediaType === 'series' || meta.season !== undefined;
-
     table.find('tr').each((_, tr) => {
-      const subA = $(tr).find('a').first();
-      const href = subA.attr('href');
-      if (!href) return;
-
-      const title = subA.text().trim();
-      const mId = href.match(/\/detail\/(\d+)\.html/);
-      const subId = mId ? mId[1] : href.split('/').pop()?.replace('.html', '') || '';
-      const detailUrl = href.startsWith('http') ? href : `${domain}${href}`;
-
-      let isCollection = false;
-      if (isTv && meta.episode !== undefined) {
-        const [matches, col] = isEpisodeMatch(title, meta.season, meta.episode);
-        if (!matches) return;
-        isCollection = col;
-      }
-
-      const tags: SubtitleTags = {
-        provider: this.name,
-        lang: [],
-        bilingual: false,
-        fmt: [],
-        source: [],
-        collection: isCollection,
-        imdbMatched: false
-      };
-
-      if (title.includes('双语') || title.includes('中英')) tags.bilingual = true;
-      tags.lang.push('chs');
-
-      candidates.push({
-        id: subId,
-        provider: 'zimuku',
-        title,
-        pageUrl: detailUrl,
-        tags,
-        rate: 0,
-        downloadsCount: 0,
-        score: 0
-      });
+      const cand = this.parseSubtitleRow($, tr, domain, meta, workImdbMatched);
+      if (cand) candidates.push(cand);
     });
-
     return candidates;
   }
 

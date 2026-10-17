@@ -18,11 +18,24 @@ describe('CacheManager', () => {
     } catch {}
   });
 
-  it('saves and checks subtitle disk cache', () => {
+  it('saves and checks subtitle disk cache for SRT, ASS and VTT', () => {
     const srtContent = Buffer.from('1\n00:00:01,000 --> 00:00:02,000\nHello\n');
     cache.saveSubtitle('subhd_123_0.srt', srtContent);
     expect(cache.hasSubtitle('subhd_123_0.srt')).toBe(true);
     expect(cache.getSubtitle('subhd_123_0.srt')?.toString()).toBe(srtContent.toString());
+
+    const assContent = Buffer.from('[Script Info]\nTitle: Test\n[Events]\nDialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,Hello');
+    cache.saveSubtitle('subhd_123_0_orig.ass', assContent);
+    expect(cache.hasSubtitle('subhd_123_0_orig.ass')).toBe(true);
+    expect(cache.getSubtitle('subhd_123_0_orig.ass')?.toString()).toBe(assContent.toString());
+
+    const vttContent = Buffer.from('WEBVTT\n\n00:01.000 --> 00:03.000\nHello VTT');
+    cache.saveSubtitle('subhd_123_0_orig.vtt', vttContent);
+    expect(cache.hasSubtitle('subhd_123_0_orig.vtt')).toBe(true);
+
+    const invalidContent = Buffer.from('Not a subtitle file at all, just some random text');
+    cache.saveSubtitle('invalid.srt', invalidContent);
+    expect(cache.hasSubtitle('invalid.srt')).toBe(false);
   });
 
   it('caches search results in memory and retrieves within TTL', () => {

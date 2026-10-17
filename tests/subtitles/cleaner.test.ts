@@ -45,4 +45,24 @@ WebVTT Subtitle line
     expect(srt).toContain('00:00:01,500 --> 00:00:04,000');
     expect(srt).toContain('WebVTT Subtitle line');
   });
+
+  it('preserves ASS tags and format while converting GBK to UTF-8 in normalizeToUtf8Original', () => {
+    const rawAssGbk = iconv.encode(
+      `[Script Info]\nTitle: 测试字幕\n[Events]\nFormat: Layer, Start, End, Text\nDialogue: 0,0:01:20.50,0:01:23.00,{\\pos(192,200)}中文对白\n`,
+      'gbk'
+    );
+    const { buffer, ext } = SubtitleCleaner.normalizeToUtf8Original(rawAssGbk, 'test.ass');
+    expect(ext).toBe('ass');
+    const text = buffer.toString('utf-8');
+    expect(text).toContain('{\\pos(192,200)}中文对白');
+    expect(text).toContain('[Script Info]');
+  });
+
+  it('validates subtitle content properly with isValidSubtitleContent', () => {
+    expect(SubtitleCleaner.isValidSubtitleContent('1\n00:00:01,000 --> 00:00:03,000\nHello\n')).toBe(true);
+    expect(SubtitleCleaner.isValidSubtitleContent('[Script Info]\nTitle: Test\nDialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,Hi')).toBe(true);
+    expect(SubtitleCleaner.isValidSubtitleContent('WEBVTT\n\n00:01.000 --> 00:03.000\nHi\n')).toBe(true);
+    expect(SubtitleCleaner.isValidSubtitleContent('Short text')).toBe(false);
+    expect(SubtitleCleaner.isValidSubtitleContent('<html><head><title>404 Not Found</title></head><body>Error</body></html>')).toBe(false);
+  });
 });

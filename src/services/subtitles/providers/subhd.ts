@@ -1,23 +1,15 @@
 import * as cheerio from 'cheerio';
-import { BaseProvider, isEpisodeMatch, extractMetaFromFilename, extractFilenameFromResponse } from './base.js';
+import {
+  BaseProvider,
+  isEpisodeMatch,
+  extractMetaFromFilename,
+  extractFilenameFromResponse,
+  SOURCE_BADGE_MAP,
+  parseSourceTagsFromText,
+  parseLangAndBilingualFromText,
+  hasChineseSubtitle
+} from './base.js';
 import { SubtitleCandidate, SubtitleTags, VideoQueryMeta } from '../types.js';
-
-const SOURCE_BADGE_MAP: Record<string, string> = {
-  官方字幕: 'official',
-  官方: 'official',
-  官译: 'official',
-  转载精修: 'reprint',
-  精修: 'reprint',
-  转载: 'reprint',
-  原创翻译: 'original',
-  原创: 'original',
-  自翻: 'original',
-  AI校对: 'ai',
-  AI润色: 'ai',
-  AI翻译: 'ai',
-  机器翻译: 'machine',
-  机翻: 'machine'
-};
 
 export class SubhdProvider extends BaseProvider {
   public readonly name = 'subhd';
@@ -146,7 +138,10 @@ export class SubhdProvider extends BaseProvider {
     const seenSids = new Set<string>();
     const isTv = meta.mediaType === 'series' || meta.season !== undefined;
 
-    const blocks = $('div.bg-white.shadow-sm.rounded-3.mb-4, div.bg-white.shadow-sm.rounded-3.mb-5').toArray();
+    const detailRows = $('div.row.pt-2.mb-2').toArray();
+    const blocks = detailRows.length > 0
+      ? detailRows
+      : $('div.bg-white.shadow-sm.rounded-3.mb-4, div.bg-white.shadow-sm.rounded-3.mb-5').toArray();
 
     for (const block of blocks) {
       const $b = $(block);
@@ -164,18 +159,20 @@ export class SubhdProvider extends BaseProvider {
       if (!sid || seenSids.has(sid)) continue;
       seenSids.add(sid);
 
-      const headText = $b.find('div.f16 a').first().text().trim();
-      const viewText = ($b.find('div.view-text a').first().text() || $b.find('div.text-secondary a').first().text()).trim();
-      const title = viewText && viewText !== headText && headText ? `${headText} - ${viewText}` : (viewText || headText || `SubHD ${sid}`);
+      const headText = ($b.find('div.f16 a, a.f16').first().text() || $b.find('div.f16').first().text()).trim();
+      const viewText = ($b.find('div.view-text a').first().text() || $b.find('div.text-secondary a').first().text() || $b.find('div.view-text').text()).trim();
+      const title = viewText || headText || `SubHD ${sid}`;
 
       let isCollection = false;
       if (isTv && meta.episode !== undefined) {
-        const [matches, col] = isEpisodeMatch(title, meta.season, meta.episode);
+        const matchText = headText && viewText && !viewText.includes(headText) ? `${headText} - ${viewText}` : title;
+        const [matches, col] = isEpisodeMatch(matchText, meta.season, meta.episode);
         if (!matches) continue;
         isCollection = col;
       }
 
-      const { tags, dlCount } = this.parseTagsFromCard($, $b);
+      const { tags, dlCount } = this.parseTagsFromCard($, $b, title);
+      if (!hasChineseSubtitle(tags)) continue;
       tags.collection = isCollection;
 
       items.push({
@@ -193,7 +190,7 @@ export class SubhdProvider extends BaseProvider {
     return items;
   }
 
-  private parseTagsFromCard($: cheerio.CheerioAPI, $b: cheerio.Cheerio<any>): { tags: SubtitleTags; dlCount: number } {
+  private parseTagsFromCard($: cheerio.CheerioAPI, $b: cheerio.Cheerio<any>, title = ''): { tags: SubtitleTags; dlCount: number } {
     const tags: SubtitleTags = {
       provider: this.name,
       lang: [],
@@ -218,22 +215,40 @@ export class SubhdProvider extends BaseProvider {
       }
 
       if ((text.includes('简体') || text.includes('简中')) && !tags.lang.includes('chs')) tags.lang.push('chs');
-      if ((text.includes('繁体') || text.includes('繁中')) && !tags.lang.includes('cht')) tags.lang.push('cht');
-      if (text.includes('双语') || text.includes('中英')) tags.bilingual = true;
+      if ((text.includes('繁体') || text.includes('繁中') || text.includes('繁體')) && !tags.lang.includes('cht')) tags.lang.push('cht');
+      if (text.includes('双语') || text.includes('中英') || text.includes('雙語')) tags.bilingual = true;
 
-      for (const fmt of ['ass', 'srt', 'ssa', 'vtt']) {
+      for (const fmt of ['ass', 'srt', 'ssa', 'vtt', 'sup']) {
         if (text.toUpperCase().includes(fmt.toUpperCase()) && !tags.fmt.includes(fmt)) {
           tags.fmt.push(fmt);
         }
       }
-
-      if ($(span).find('i.download, i.cloud').length || /下载/.test(text)) {
-        const m = text.match(/(\d+)/);
-        if (m) dlCount = parseInt(m[1], 10);
-      }
     });
 
-    if (tags.lang.length === 0) tags.lang.push('chs');
+    parseSourceTagsFromText(title, tags.source);
+    parseLangAndBilingualFromText(title, tags);
+
+    // Download count parsing: SVG download icon or legacy elements
+    const svgDlText = $b.find('svg.bi-download').next('span').text().trim() ||
+                      $b.find('svg.bi-download').parent().text().trim();
+    if (svgDlText) {
+      const m = svgDlText.match(/(\d+)/);
+      if (m) dlCount = parseInt(m[1], 10);
+    }
+    if (!dlCount) {
+      $b.find('span').each((_, span) => {
+        const text = $(span).text().trim();
+        if ($(span).find('i.download, i.cloud').length || /下载/.test(text)) {
+          const m = text.match(/(\d+)/);
+          if (m) dlCount = parseInt(m[1], 10);
+        }
+      });
+    }
+    if (!dlCount) {
+      const col2Text = $b.find('div.col-2.d-none.d-lg-block div.text-end.text-secondary, div.text-end.text-secondary').text().trim();
+      const m = col2Text.match(/(\d+)/);
+      if (m) dlCount = parseInt(m[1], 10);
+    }
 
     const zuEl = $b.find('a[href^="/zu/"]').first();
     if (zuEl.length) tags.fansub = zuEl.text().trim();

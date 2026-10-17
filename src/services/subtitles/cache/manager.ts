@@ -98,14 +98,23 @@ export class CacheManager {
       const stat = fs.statSync(filePath);
       if (stat.size < 20) return false;
 
-      // Ensure content is actually valid SRT
+      // Ensure content is valid subtitle (SRT, ASS, SSA, or VTT)
       const fd = fs.openSync(filePath, 'r');
-      const sample = Buffer.alloc(500);
-      const bytesRead = fs.readSync(fd, sample, 0, 500, 0);
+      const sample = Buffer.alloc(4096);
+      const bytesRead = fs.readSync(fd, sample, 0, 4096, 0);
       fs.closeSync(fd);
 
-      if (bytesRead > 0 && sample.toString('utf-8', 0, bytesRead).includes('-->')) {
-        return true;
+      if (bytesRead > 0) {
+        const sampleStr = sample.toString('utf-8', 0, bytesRead);
+        if (
+          sampleStr.includes('-->') ||
+          sampleStr.includes('[Script Info]') ||
+          sampleStr.includes('[Events]') ||
+          sampleStr.includes('Dialogue:') ||
+          sampleStr.includes('WEBVTT')
+        ) {
+          return true;
+        }
       }
       fs.unlinkSync(filePath);
       return false;

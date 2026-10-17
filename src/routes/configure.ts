@@ -48,6 +48,12 @@ export function handleConfigure(_req: Request, res: Response) {
     if (!config.subtitleEnabled) {
       html = html.replace('id="subtitleEnabled" checked', 'id="subtitleEnabled"');
     }
+    if (config.subtitleShowOriginal) {
+      html = html.replace('id="subtitleShowOriginal"', 'id="subtitleShowOriginal" checked');
+    }
+    if (config.subtitleKeepOriginalFormat) {
+      html = html.replace('id="subtitleKeepOriginalFormat"', 'id="subtitleKeepOriginalFormat" checked');
+    }
     if (config.subtitleLang) {
       html = html.replace(`id="subtitleLang_${config.subtitleLang}"`, `id="subtitleLang_${config.subtitleLang}" selected`);
     }
@@ -79,7 +85,9 @@ export async function handleSaveConfig(req: Request, res: Response) {
       subtitleLang,
       subtitleSource,
       subtitleMaxResults,
-      subtitleProxy
+      subtitleProxy,
+      subtitleShowOriginal,
+      subtitleKeepOriginalFormat
     } = req.body || {};
 
     const updates: Record<string, string> = {};
@@ -94,6 +102,8 @@ export async function handleSaveConfig(req: Request, res: Response) {
     if (subtitleSource) updates['SUBTITLE_SOURCE'] = String(subtitleSource);
     if (subtitleMaxResults !== undefined) updates['SUBTITLE_MAX_RESULTS'] = String(subtitleMaxResults);
     if (subtitleProxy !== undefined) updates['SUBTITLE_PROXY'] = String(subtitleProxy).trim();
+    if (subtitleShowOriginal !== undefined) updates['SUBTITLE_SHOW_ORIGINAL'] = String(subtitleShowOriginal);
+    if (subtitleKeepOriginalFormat !== undefined) updates['SUBTITLE_KEEP_ORIGINAL_FORMAT'] = String(subtitleKeepOriginalFormat);
 
     saveConfigToEnv(updates);
     return res.json({ success: true, message: 'Configuration saved successfully to .env' });

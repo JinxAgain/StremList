@@ -1,5 +1,47 @@
 import axios, { AxiosInstance } from 'axios';
-import { SubtitleCandidate, VideoQueryMeta } from '../types.js';
+import { SubtitleCandidate, VideoQueryMeta, FormatSubtitleOptions } from '../types.js';
+
+export const SOURCE_BADGE_MAP: Record<string, 'official' | 'ai' | 'machine'> = {
+  官方字幕: 'official',
+  官方译本: 'official',
+  官方: 'official',
+  官译: 'official',
+  AI校对: 'ai',
+  AI润色: 'ai',
+  AI翻译: 'ai',
+  机器翻译: 'machine',
+  机翻: 'machine'
+};
+
+export function parseSourceTagsFromText(text: string, existing: string[] = []): string[] {
+  if (!text) return existing;
+  for (const [cn, key] of Object.entries(SOURCE_BADGE_MAP)) {
+    if (text.includes(cn) && !existing.includes(key)) {
+      existing.push(key);
+    }
+  }
+  return existing;
+}
+
+export function parseLangAndBilingualFromText(
+  text: string,
+  tags: { lang: string[]; bilingual: boolean }
+): void {
+  if (!text) return;
+  if (/双语|雙語|中英|简英|繁英|chs[-&_ ]*eng|cht[-&_ ]*eng|zh[-&_ ]*en/i.test(text)) {
+    tags.bilingual = true;
+  }
+  if (/简体|简中|简英|简繁|(?:^|[^a-z0-9])(?:chs|gb)(?:$|[^a-z0-9])|中文字幕|国配中字|中字/i.test(text)) {
+    if (!tags.lang.includes('chs')) tags.lang.push('chs');
+  }
+  if (/繁体|繁體|繁中|繁英|简繁|(?:^|[^a-z0-9])(?:cht|big5)(?:$|[^a-z0-9])/i.test(text)) {
+    if (!tags.lang.includes('cht')) tags.lang.push('cht');
+  }
+}
+
+export function hasChineseSubtitle(tags: { lang: string[]; bilingual: boolean }): boolean {
+  return Boolean(tags.bilingual || tags.lang.includes('chs') || tags.lang.includes('cht'));
+}
 
 export const CN_NUM_MAP: Record<number, string> = {
   1: '一', 2: '二', 3: '三', 4: '四', 5: '五',
@@ -110,6 +152,18 @@ export function isEpisodeMatch(
       hasDifferentEp = true;
     }
 
+    const rangeMatches = [
+      ...Array.from(titleLower.matchAll(/(?:^|[^a-z0-9]|s\d{1,2})[eE][pP]?(\d{1,3})\s*[-~至到]\s*[eE]?[pP]?(\d{1,3})\b/gi)),
+      ...Array.from(titleLower.matchAll(/第\s*(\d{1,3})\s*[-~至到]\s*(\d{1,3})\s*[集话話]/g))
+    ];
+    for (const rm of rangeMatches) {
+      const startEp = parseInt(rm[1], 10);
+      const endEp = parseInt(rm[2], 10);
+      if (startEp > 0 && startEp <= episode && episode <= endEp) {
+        return [true, true];
+      }
+    }
+
     if (matchedEp) {
       return [true, false];
     }
@@ -189,10 +243,14 @@ export function extractReleaseTags(candTitle: string): string[] {
   let text = (candTitle || '').trim();
   text = text.replace(/\.(zip|rar|7z|tar|gz|bz2|srt|ass|ssa|vtt)$/i, '');
 
-  if (/官方|官译/i.test(text)) tags.push('Official');
-  if (/精修|转载精修/i.test(text)) tags.push('Refined');
-  if (/全\s*\d+\s*[集话話]|全集|合集|全部|整季|季全/i.test(text)) tags.push('Complete');
+  // 1. Resolution
+  const resMatch = text.match(/(2160p|4k|1080p|1080i|720p|576p|480p)/i);
+  if (resMatch) {
+    const val = resMatch[1].toLowerCase();
+    tags.push(val === '4k' ? '4K' : val);
+  }
 
+  // 2. Rip / Source
   if (/\b(remux)\b/i.test(text)) tags.push('REMUX');
   else if (/\b(blu-?ray|bdrip|brrip|blu\.ray)\b/i.test(text)) tags.push('BluRay');
   else if (/\b(web-?dl|amzn[\.\s_-]?web-?dl)\b/i.test(text)) tags.push('WEB-DL');
@@ -202,28 +260,32 @@ export function extractReleaseTags(candTitle: string): string[] {
   else if (/\b(dvdrip|dvd)\b/i.test(text)) tags.push('DVDRip');
   else if (/\b(cam-?rip|cam|telesync|ts)\b/i.test(text)) tags.push('CAM-Rip');
 
-  const resMatch = text.match(/(2160p|4k|1080p|1080i|720p|480p|576p)/i);
-  if (resMatch) {
-    const val = resMatch[1].toLowerCase();
-    tags.push(val === '4k' ? '4K' : val);
-  }
-
+  // 3. Video Codec
   if (/\b(x265|hevc|h[\.\s_-]?265)\b/i.test(text)) tags.push('x265');
   else if (/\b(x264|avc|h[\.\s_-]?264)\b/i.test(text)) tags.push('x264');
 
+  // 4. Bit depth & Dynamic Range
   if (/\b(10-?bit)\b/i.test(text)) tags.push('10bit');
   if (/\b(hdr10\+|hdr10|hdr)\b/i.test(text)) tags.push('HDR');
   if (/\b(dv|dolby[\.\s_-]?vision)\b/i.test(text)) tags.push('DV');
 
+  // 5. Audio
   if (/\b(atmos)\b/i.test(text)) tags.push('Atmos');
   else if (/\b(ddp[\.\s_-]?5[\.\s_-]?1|ddp)\b/i.test(text)) tags.push('DDP5.1');
 
-  const groupMatch = text.match(/[-. ](PSA|KINGDOM|POKE|SCOPE|YTS|YIFY|RARBG|YYeTs|FLUX|NTb|BONE)\b/i);
+  // 6. Release Group
+  const groupMatch = text.match(/[-. ](PSA|KINGDOM|POKE|SCOPE|YTS|YIFY|RARBG|YYeTs|FLUX|NTb|BONE|CHDWEB|BYNDR|KyoGo|Rapta|DKS|LMNTRY|CAKES|LEN-X)\b/i);
   if (groupMatch) {
-    tags.push(groupMatch[1].toUpperCase());
+    const g = groupMatch[1];
+    const knownGroups = ['PSA', 'KINGDOM', 'POKE', 'SCOPE', 'YTS', 'YIFY', 'RARBG', 'YYeTs', 'FLUX', 'NTb', 'BONE', 'CHDWEB', 'BYNDR', 'KyoGo', 'Rapta', 'DKS', 'LMNTRY', 'CAKES', 'LEN-X'];
+    const found = knownGroups.find((k) => k.toLowerCase() === g.toLowerCase());
+    tags.push(found || g);
   } else if (/人人影视|yyets/i.test(text)) {
     tags.push('YYeTs');
   }
+
+  // 7. Collection
+  if (/全\s*\d+\s*[集话話]|全集|合集|全部|整季|季全/i.test(text)) tags.push('Complete');
 
   if (tags.length === 0) {
     const cleanAscii = text.replace(/[^A-Za-z0-9]/g, ' ');
@@ -250,15 +312,42 @@ export function extractReleaseTags(candTitle: string): string[] {
 
 export function formatSubtitleInfo(
   cand: SubtitleCandidate,
-  query: VideoQueryMeta
-): { label: string; filename: string } {
-  const provTag = cand.provider.toLowerCase() === 'subhd' ? 'SubHD' : 'Zimuku';
-  let langTag = 'Chs';
-  if (cand.tags.bilingual) langTag = 'Bilingual';
-  else if (cand.tags.lang.includes('cht')) langTag = 'Cht';
+  query: VideoQueryMeta,
+  options: FormatSubtitleOptions = {}
+): { label: string; filename: string; format: string } {
+  let langBadge = '[简]';
+  let langAscii = 'Chs';
+  if (cand.tags.bilingual) {
+    langBadge = '[双]';
+    langAscii = 'Bilingual';
+  } else if (
+    (options.langPref === 'cht' && cand.tags.lang.includes('cht')) ||
+    (!cand.tags.lang.includes('chs') && cand.tags.lang.includes('cht'))
+  ) {
+    langBadge = '[繁]';
+    langAscii = 'Cht';
+  }
 
-  const tagBracketSpace = `[${langTag} ${provTag}]`;
-  const tagBracketDot = `[${langTag}.${provTag}]`;
+  const allSources = parseSourceTagsFromText(cand.title, [...(cand.tags.source || [])]);
+  let sourceBadge = '';
+  if (allSources.includes('official')) {
+    sourceBadge = '[官译]';
+  } else if (allSources.includes('ai')) {
+    sourceBadge = '[AI]';
+  } else if (allSources.includes('machine')) {
+    sourceBadge = '[机翻]';
+  }
+
+  const provTag = cand.provider.toLowerCase() === 'subhd' ? 'SubHD' : 'Zimuku';
+
+  let targetFormat = 'srt';
+  if (options.keepOriginalFormat) {
+    const fmts = (cand.tags.fmt || []).map((f) => f.toLowerCase());
+    const titleLower = (cand.title || '').toLowerCase();
+    if (fmts.includes('ass') || titleLower.endsWith('.ass')) targetFormat = 'ass';
+    else if (fmts.includes('ssa') || titleLower.endsWith('.ssa')) targetFormat = 'ssa';
+    else if (fmts.includes('vtt') || titleLower.endsWith('.vtt')) targetFormat = 'vtt';
+  }
 
   let cleanTitle = (query.title || 'Subtitle').replace(/[^A-Za-z0-9 ]/g, ' ').trim();
   cleanTitle = cleanTitle.split(/\s+/).join(' ') || 'Subtitle';
@@ -275,14 +364,24 @@ export function formatSubtitleInfo(
 
   const tags = extractReleaseTags(cand.title || '');
 
-  // Human readable label: OpenSubtitles v3 style
-  const labelParts = [cleanTitle];
-  if (epTag && !labelParts.includes(epTag)) labelParts.push(epTag);
-  labelParts.push(...tags);
-  labelParts.push(tagBracketSpace);
-  const label = labelParts.join(' · ');
+  let label: string;
+  if (options.showOriginal) {
+    const cleanOrigTitle = (cand.title || query.title || 'Subtitle')
+      .trim()
+      .replace(/^[.\s]+/, '')
+      .replace(/\.(zip|rar|7z|tar|gz|bz2|srt|ass|ssa|vtt)$/i, '');
+    label = `${langBadge}${sourceBadge}${cleanOrigTitle}[${provTag}]`;
+  } else {
+    const labelParts: string[] = [langBadge];
+    if (sourceBadge) labelParts.push(sourceBadge);
+    labelParts.push(cleanTitle);
+    if (epTag && !labelParts.includes(epTag)) labelParts.push(epTag);
+    labelParts.push(...tags);
+    labelParts.push(`[${provTag}]`);
+    label = labelParts.join(' · ');
+  }
 
-  // URL-safe ASCII filename
+  const tagBracketDot = `[${langAscii}.${provTag}]`;
   const fnParts = [dotTitle];
   if (epTag && !fnParts.includes(epTag)) fnParts.push(epTag);
   fnParts.push(...tags);
@@ -293,7 +392,7 @@ export function formatSubtitleInfo(
     filenameBody = truncated.includes('.') ? truncated.slice(0, truncated.lastIndexOf('.')) : truncated;
   }
 
-  return { label, filename: `${filenameBody}.srt` };
+  return { label, filename: `${filenameBody}.${targetFormat}`, format: targetFormat };
 }
 
 export function extractFilenameFromResponse(
