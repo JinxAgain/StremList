@@ -16,7 +16,11 @@ export function extractInfoHash(stream: StremioStream): string | null {
 }
 
 export class TorrentioScraper {
-  constructor(private baseUrl: string) {}
+  private baseUrl: string;
+
+  constructor(baseUrl: string) {
+    this.baseUrl = baseUrl ? baseUrl.trim().replace(/\/+$/, '').replace(/\/manifest\.json$/i, '').replace(/\/+$/, '') : '';
+  }
 
   async fetchStreams(type: string, id: string): Promise<ScrapedStream[]> {
     if (!this.baseUrl) return [];
@@ -25,7 +29,7 @@ export class TorrentioScraper {
       const url = `${this.baseUrl}/stream/${type}/${encodeURIComponent(id)}.json`;
       const response = await axios.get<StreamResponse>(url, {
         timeout: 5000,
-        headers: { 'User-Agent': 'StremList/0.1.0' }
+        headers: { 'User-Agent': 'StremList/0.2.0' }
       });
 
       if (!response.data || !Array.isArray(response.data.streams)) {
@@ -36,11 +40,16 @@ export class TorrentioScraper {
       for (const s of response.data.streams) {
         const hash = extractInfoHash(s);
         if (hash) {
+          const fullTitle = s.title || s.description || '';
+          const fullDesc = s.description || s.title || '';
           results.push({
             infoHash: hash,
             name: s.name || 'Torrentio',
-            title: s.title || '',
-            fileIdx: s.fileIdx
+            title: fullTitle,
+            description: fullDesc,
+            fileIdx: s.fileIdx,
+            sourceAddon: 'torrentio',
+            behaviorHints: s.behaviorHints
           });
         }
       }

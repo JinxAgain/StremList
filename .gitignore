@@ -17,6 +17,7 @@ pnpm-debug.log*
 *.zip
 _pack_temp/
 data/
+.opencode/
 
 # OS & Editor
 .DS_Store
@@ -27,3 +28,7 @@ Thumbs.db
 # Reference repositories
 AIOStreams/
 stremthru/
+harbor/
+comet/
+OpenList/
+stremio-addon-sdk/

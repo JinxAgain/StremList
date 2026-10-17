@@ -1,4 +1,8 @@
 # StremList Windows Autostart Enabler
+[Console]::InputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+chcp 65001 | Out-Null
 $ws = New-Object -ComObject WScript.Shell
 $startupPath = [System.Environment]::GetFolderPath('Startup')
 $targetScript = Join-Path $PSScriptRoot "start-background.vbs"

@@ -1,124 +1,140 @@
-# StremList ⚡
+<div align="center">
 
-> Debrid-like Stremio addon integrating **OpenList** (115 & PikPak) with torrent indexers (**Torrentio** & **Comet**) for seamless instant cloud playback.
+<img src="src/public/logo.png" width="132" height="132" alt="StremList Vintage Cinephile Logo" style="border-radius: 28px; box-shadow: 0 12px 28px -5px rgba(217, 119, 6, 0.45);" />
 
+# StremList 🎬
+
+**[ English ](README.md)** | **[ 简体中文 ](README_zh.md)**
+
+> A Debrid-like Stremio addon integrating **OpenList** (115 & PikPak), torrent indexers (**Torrentio** & **Comet**), and **Chinese Subtitles** (SubHD & Zimuku) for seamless instant cloud streaming.
+
+[![Version](https://img.shields.io/badge/version-0.2.0-amber.svg)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18.0.0-green.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
+
+</div>
 
 ---
 
 ## 🌟 Key Features
 
-- **Debrid-like Cloud Streaming**: Click any movie or TV series stream in Stremio — StremList automatically searches torrents, creates an offline download task in OpenList (115 or PikPak), polls until ready, and plays immediately.
-- **Instant Cloud Playback (302 Redirect)**: Redirects playback directly to OpenList's stream URL (`raw_url`). Zero media bandwidth is consumed on your StremList server.
-- **Smart Cloud Cache Detection**: Checks both 115 and PikPak before creating new download tasks. If a torrent was previously downloaded on either drive, it starts streaming in under 500ms.
-- **115 Anti-Hotlink Protection & Local Proxy**: Automatically configures and resolves 115 streams through OpenList's native `/d/` local proxy stream, bypassing 115 CDN's `403 Forbidden` (`invalid signature`) checks on external video players (Stremio / ExoPlayer / mpv).
-- **Parallel Torrent Aggregation**: Queries multiple upstreams (Torrentio, Comet) concurrently with timeout protection, deduplicates by `infoHash`, and filters out low-quality or dead streams.
-- **Smart Video Matcher**:
-  - **Movies**: Filters out samples (< 100MB) and extras, automatically selecting the main feature film.
-  - **Series**: Intelligently matches episodes by `S01E02`, `1x02`, `EP02`, or `第2集` patterns with fallback to stream index.
-- **Zero-Dependency Windows Tooling**:
-  - `start.bat`: One-click interactive console with live debug log.
-  - `start-background.vbs` / `start-background.bat`: **Completely silent background runner without console window**.
-  - `stop.bat`: One-click shutdown script.
-  - Automatically fetches portable Node.js v20 if Node is not installed on the system.
-- **Web Configuration UI**: Visual setup at `http://127.0.0.1:7000/configure` with one-click OpenList admin authentication and one-click Stremio addon installation.
+### 1. ⚡ Debrid-like Instant Cloud Playback
+- **Zero Server Bandwidth (302 Direct Stream)**: Redirects players directly via HTTP 302 to the cloud download URL (`raw_url`). Video streaming consumes zero host bandwidth.
+- **115 Anti-Hotlink Protection & Local Proxy**: Automatically detects 115 streams and routes them through OpenList's native `/d/` local proxy stream with HMAC signatures, resolving `403 Forbidden` (`invalid signature`) errors on external players (Stremio / ExoPlayer / mpv).
+- **Cross-Drive Cache Sniffing**: Inspects both **115** and **PikPak** before dispatching offline download jobs. If content was previously cached in either drive, playback begins in under 500ms.
+- **Automatic Offline Task Polling**: Automatically submits magnet hashes to OpenList, polls the cloud drive directory, and redirects the moment the media file is ready.
+- **Task Deduplication & Conflict Protection**: Deduplicates offline tasks within a 15-minute window to prevent player retries from spawning duplicate download jobs or duplicate folders in cloud storage.
+- **Smart Promo Ad Filtering**: Filters out release group promotional clips, website watermarks, and samples, always selecting the true full-length feature or episode.
+
+### 2. 🔍 Intelligent Scraper Aggregator & Quality Sorter
+- **Concurrent Multi-Source Scraping**: Concurrently queries **Torrentio** and **Comet** with isolated timeouts and fault tolerance.
+- **Hash Deduplication & Seeder Merging**: Deduplicates identical torrents by `infoHash` and merges metadata, preserving the highest seeder count reported across scrapers.
+- **Smart Quality Hierarchy**: Priority ordering by resolution (4K / 2160p > 1080p > 720p), codec (Dolby Vision, HDR10+, Remux), and healthy seeder counts.
+- **Dead Stream Filtering**: Discards dead streams (0 seeders) or unplayable items, presenting only viable streams.
+- **Accurate Cloud Cache Badging**: Clearly marks cached cloud items with `[115⚡]` or `[PikPak⚡]` only when playable media files actually exist, while pending magnets display `[115🧲]`.
+
+### 3. 💬 Native Chinese Subtitle Ecosystem
+- **Multi-Source Subtitle Indexers**: Integrated search across **SubHD** and **Zimuku (字幕库)**.
+- **Smart Encoding Auto-Detection**: Uses `iconv-lite` to automatically detect and transcode diverse Chinese encodings (GBK, GB18030, Big5, UTF-8, UTF-16LE/BE) into clean UTF-8 VTT/SRT, eliminating subtitle mojibake and missing glyphs.
+- **Archive Extraction & File Matching**: Automatically unzips `.zip` and `.rar` subtitle packages via `adm-zip`, analyzing filename tokens to match the exact release and episode.
+- **Language Preference Priority**: Flexible sorting by Bilingual (双语), Simplified (简体中文), or Traditional (繁体中文).
+- **Third-Party Client Compatibility**: Compatible with Stremio, Harbor, and AIOStreams.
+
+### 4. 🌐 Clean URL Architecture & Dynamic Configuration
+- **Zero-Reinstall Clean URL**: Install once via `http://127.0.0.1:7000/manifest.json`.
+- **Dynamic Configuration Updates**: Any adjustments saved in the `/configure` Web UI take effect immediately on the server — no need to uninstall or re-add the plugin in Stremio.
+- **Encrypted Parameter Fallback**: Fully backwards-compatible with `/:config/manifest.json` parameter endpoints.
+
+### 5. 🛠️ Zero-Dependency Windows Management Tooling
+- **`start.bat`**: Interactive console launcher with live log streaming (enforces UTF-8 Code Page 65001, suppressing PowerShell `NativeCommandError` noise and Emoji mojibake).
+- **`start-background.vbs` / `start-background.bat`**: 100% silent background daemon with zero CMD popup window and PID tracking in `stremlist.pid`.
+- **`stop.bat`**: One-click shutdown script that terminates active server processes and frees port 7000.
+- **`autostart-enable.bat` / `autostart-disable.bat`**: One-click Windows startup integration.
+- **Auto-Portable Node.js**: Automatically downloads portable Node.js LTS into `.bin` if not installed on the system.
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-+-------------------------------------------------------------------------+
-|                              Stremio Client                             |
-+-------------------------------------------------------------------------+
-       | 1. GET /stream/:type/:id.json          ^ 4. 302 Redirect to stream
-       |                                        |    (direct / proxy playback)
-       v                                        |
-+-----------------------------------------------+-------------------------+
-|                           StremList Server                              |
-|                                                                         |
-|  [HTTP Router]                                                          |
-|   - GET /manifest.json & /:config/manifest.json                         |
-|   - GET /stream/:type/:id.json & /:config/stream/:type/:id.json         |
-|   - GET /play/:hash & /:config/play/:hash                               |
-|   - GET /configure & POST /api/openlist/login & /api/openlist/test      |
-|                                                                         |
-|  [Scraper Aggregator]            [OpenList Client & Resolver]           |
-|   - Torrentio & Comet             - Cache verification (115 / PikPak)   |
-|   - Deduplication by infoHash     - Pre-creates download folders        |
-|   - Rewrite to /play/:hash        - Adds offline download (115 Open)    |
-|                                   - Resolves raw / proxy playback URL   |
-+-------------------------------------------------------------------------+
-        | (Parallel HTTP requests)                      | (REST API)
-        v                                               v
-+-------------------------------+              +--------------------------+
-| Upstream Indexers             |              | OpenList Service         |
-| - Torrentio                   |              | - 115 Drive (/115)       |
-| - Comet                       |              | - PikPak (/pikpak)       |
-+-------------------------------+              +--------------------------+
++-----------------------------------------------------------------------------------+
+|                                  Stremio Client                                   |
++-----------------------------------------------------------------------------------+
+       | 1. Stream Query /stream/:type/:id.json          ^ 4. 302 Playback Redirect
+       |    Subtitle Query /subtitles/:type/:id.json     |    (Direct / Local Proxy)
+       v                                                 |
++--------------------------------------------------------+--------------------------+
+|                                StremList Server                                   |
+|                                                                                   |
+|  [HTTP Router & Middleware]                                                       |
+|   - GET /manifest.json (Clean URL) & /:config/manifest.json                       |
+|   - GET /stream/:type/:id.json (Aggregated & Sorted Streams)                      |
+|   - GET /subtitles/:type/:id.json (Cleaned & Encoded Subtitles)                   |
+|   - GET /play/:hash (302 Redirect Handler)                                        |
+|   - GET /configure & POST /api/config/save (Web Configuration)                    |
+|   - GET /logo.png & /health (Static Assets & Monitoring)                          |
+|                                                                                   |
+|  [Scraper Aggregator & Sorter]         [OpenList Client & Playback Resolver]      |
+|   - Parallel Torrentio & Comet query    - Cache sniffing (115 & PikPak)           |
+|   - infoHash deduplication              - Deduplicated offline task dispatch      |
+|   - Seeder merging & 4K/HDR sorting     - Recursive candidate discovery           |
+|                                         - 115 /d/ local proxy stream with HMAC    |
+|                                                                                   |
+|  [Chinese Subtitles Engine]                                                       |
+|   - SubHD & Zimuku scrapers                                                       |
+|   - Auto charset transcoding (iconv-lite: GBK/Big5 -> UTF-8)                      |
+|   - Archive auto-extraction (.zip/.rar via adm-zip) & filename matcher            |
++-----------------------------------------------------------------------------------+
+       | (Parallel Scraping)                     | (REST API)         | (Scraping)
+       v                                         v                    v
++--------------------------+          +--------------------+  +---------------------+
+| Upstream Indexers        |          | OpenList Service   |  | Subtitle Repos      |
+| - Torrentio              |          | - 115 (/115)       |  | - SubHD             |
+| - Comet                  |          | - PikPak (/pikpak) |  | - Zimuku (字幕库)   |
++--------------------------+          +--------------------+  +---------------------+
 ```
 
 ---
 
 ## 🚀 Quick Start
 
-### Method 1: Windows One-Click (Recommended for Windows)
+### Method 1: Windows One-Click (Recommended)
 
-Simply clone or download this repository, and use the included scripts:
-
-1. **First-Time Setup & Stremio Installation**:
+1. **First-Time Setup**:
    - Double-click **`start.bat`**.
-   - Your browser will open to `http://127.0.0.1:7000/configure`.
-   - Enter your OpenList admin credentials to fetch the token, then click **⚡ Install Addon in Stremio**.
-   - **You only need to install it once!** Stremio saves your addon configuration in your account, so you never need to reinstall it after computer reboots.
+   - Your browser will open `http://127.0.0.1:7000/configure`.
+   - Enter your OpenList admin credentials, click **🔑 一键获取 Token (Fetch Token)**, then click **⚡ Install Addon in Stremio**.
+   - **Install once and forget!** Stremio syncs your addon across all devices via your account.
 
-2. **Silent Background Execution**:
+2. **Silent Background Daemon**:
    - Double-click **`start-background.vbs`** (or **`start-background.bat`**).
-   - Launches 100% silently in the background with **zero console window** and **no browser popup**.
+   - Runs 100% silently in the background with **no command prompt window**.
    - Need to adjust settings later? Just double-click **`configure.bat`**.
-   - All server logs are written to `debug.log`.
 
-3. **Auto-Start on Boot (Windows Startup)**:
-   - Double-click **`autostart-enable.bat`** — automatically adds StremList to your Windows Startup folder!
-   - StremList will silently run in the background every time Windows starts up.
-   - To disable autostart at any time, double-click **`autostart-disable.bat`**.
+3. **Auto-Start on Boot**:
+   - Double-click **`autostart-enable.bat`** to register StremList in Windows Startup.
+   - Run **`autostart-disable.bat`** to remove autostart at any time.
 
-4. **Stop Background Server**:
-   - Double-click **`stop.bat`** to cleanly terminate the background StremList process and free port 7000.
-
-> [!TIP]
-> **No Node.js installed?** No problem! The start scripts will automatically detect if Node.js is missing and download the official portable Node.js v20 LTS into a local `.bin` folder.
+4. **Shutdown Service**:
+   - Double-click **`stop.bat`** to terminate the service and free port 7000.
 
 ---
 
-### Method 2: Cross-Platform (Linux / macOS / Windows)
-
-#### 1. Prerequisites
-- **Node.js** >= 18.0.0
-- An active [OpenList](https://fox.oplist.org) or AList instance with mounted storage (`/115` and/or `/pikpak`).
-
-#### 2. Install & Start
+### Method 2: Cross-Platform (Linux / macOS / Docker)
 
 ```bash
-# Clone the repository
+# 1. Clone repository
 git clone https://github.com/JinxAgain/StremList.git
 cd StremList
 
-# Install dependencies
+# 2. Install dependencies
 npm install
 
-# Copy example environment configuration
+# 3. Create .env config
 cp .env.example .env
 
-# Run development server
-npm run dev
-```
-
-For production deployment:
-
-```bash
+# 4. Build and start
 npm run build
 npm start
 ```
@@ -129,32 +145,23 @@ npm start
 
 ### 1. 115 Cloud Storage Setup (Crucial)
 
-115 Cloud CDN enforces strict anti-hotlink validation (checking `User-Agent` and client session signatures). If third-party media players (Stremio / ExoPlayer / mpv) connect to raw 115 CDN links directly, 115 rejects them with `HTTP 403 Forbidden` (`invalid signature`).
+115 CDN requires authorized signatures on external players. Direct connections will be blocked with `403 Forbidden`.
 
 To ensure smooth playback:
-1. In OpenList Admin Panel (`http://127.0.0.1:5244/@manage/storages`), click **Edit** on your `115` or `115 Open` storage.
+1. In OpenList Admin Panel (`http://127.0.0.1:5244/@manage/storages`), click **Edit** on your `115` storage.
 2. Enable **Web Proxy** (`web_proxy`: ON).
 3. Set **WebDAV Policy** to **Local Proxy** (`native_proxy` / 本地代理).
-4. Save the storage settings.
+4. Save settings.
 
 > [!NOTE]
-> **Automatic Optimization**: When you connect via StremList's Web UI (`/configure`) using an OpenList Admin account, **StremList automatically enables Web Proxy and Local Proxy for your 115 mount** via the OpenList Admin API.
+> When you test connections via StremList's Web UI with an OpenList admin account, StremList will **automatically enable Web Proxy and Local Proxy** for your 115 drive.
 
 ### 2. PikPak Storage Setup
 
-Mount your PikPak drive in OpenList at `/pikpak` or `/PikPak`. PikPak CDN links support direct streaming out of the box.
+Mount PikPak in OpenList under `/pikpak` or `/PikPak`.
 
----
-
-## 📺 How to Use with Stremio
-
-1. Start StremList (e.g. double-click `start-background.vbs` or run `npm run dev`).
-2. Open your browser to `http://127.0.0.1:7000/configure`.
-3. Enter your OpenList URL (default: `http://127.0.0.1:5244`).
-4. Click **🔑 一键获取 Token** and enter your OpenList admin credentials, or paste your API Token directly.
-5. Click **🔍 测试连接** to verify connectivity.
-6. Click **⚡ Install Addon in Stremio** (or copy the manifest link to install manually in Stremio).
-7. In Stremio, search for any movie or TV series and select any stream labeled `[StremList ⚡ 115/PikPak]`!
+> [!IMPORTANT]
+> In OpenList Storage Settings for PikPak, ensure **Disable media link** (禁用媒体链接) is turned **OFF / Unchecked**. This allows OpenList to fetch direct high-speed CDN streaming links from PikPak. StremList automatically detects and disables this when testing connections with an admin token.
 
 ---
 
@@ -168,31 +175,48 @@ Mount your PikPak drive in OpenList at `/pikpak` or `/PikPak`. PikPak CDN links 
 | `DEFAULT_DRIVE` | `115` | Default target cloud drive (`115` or `pikpak`) |
 | `TORRENTIO_URL` | `https://torrentio.strem.fun` | Upstream Torrentio scraper URL |
 | `COMET_URL` | `https://comet.elfhosted.com` | Upstream Comet scraper URL |
-| `POLL_TIMEOUT` | `25` | Maximum seconds to wait for offline download completion |
-| `POLL_INTERVAL` | `1500` | Polling interval in milliseconds |
+| `POLL_TIMEOUT` | `30` | Maximum seconds to wait for offline download completion |
+| `POLL_INTERVAL` | `3000` | Polling interval in milliseconds (3s default to avoid cloud rate limits) |
+| `SUBTITLE_ENABLED` | `true` | Enable or disable Chinese subtitles engine |
+| `SUBTITLE_LANG` | `bilingual` | Subtitle preference (`bilingual`, `chs`, `cht`) |
+| `SUBTITLE_SOURCE` | `all` | Active subtitle scrapers (`all`, `subhd`, `zimuku`) |
+| `SUBTITLE_MAX_RESULTS` | `8` | Maximum number of subtitle streams returned per title |
+| `SUBTITLE_PROXY` | `""` | Optional HTTP/HTTPS proxy for subtitle providers |
 
 ---
 
-## 📦 Packaging for Distribution
+## 📦 Multi-Flavor Release Packaging
 
-To produce a clean, ready-to-use distribution `.zip` archive for other Windows users:
+Run `.\pack.bat` to build all production-ready distribution archives:
 
-```powershell
-.\pack.bat
-# or: powershell -ExecutionPolicy Bypass -File pack.ps1
-```
-
-This creates `StremList-Windows-Debug.zip`, which contains all source code, dependencies manifest, and launcher scripts (`start.bat`, `start-background.vbs`, `stop.bat`).
+| Flavor | Target Archive | Subtitles | Description |
+| :--- | :--- | :--- | :--- |
+| **Plus** | `StremList-Plus-Windows.zip` | Enabled | Full-featured edition (115/PikPak + Chinese Subtitles). |
+| **Lite** | `StremList-Lite-Windows.zip` | Disabled | Pure cloud streaming edition without subtitle scraper overhead. |
+| **Debug** | `StremList-Windows-Debug.zip` | Enabled | Complete package with interactive console, live logs, and diagnostic tools. |
 
 ---
 
 ## 🧪 Testing
 
-Run the full automated test suite (including unit and end-to-end integration tests):
+StremList includes a comprehensive automated test suite covering unit tests, scraper aggregation, encoding transcoding, and end-to-end integration:
 
 ```bash
 npm test
 ```
+
+---
+
+## 🙏 Acknowledgments & Credits
+
+StremList stands on the shoulders of the open-source community and incredible media streaming projects:
+
+- **[OpenList](https://fox.oplist.org) / [AList](https://alist.nn.ci/)**: The powerful cloud drive mounting and offline download engine that powers 115 and PikPak storage.
+- **[Stremio](https://www.stremio.com/)**: The modern, extensible media center that revolutionizes home entertainment.
+- **[Torrentio](https://torrentio.strem.fun/)**: The quintessential torrent provider addon for Stremio.
+- **[Comet](https://github.com/g0ldy/comet)**: Exceptional, lightning-fast Stremio torrent indexing backend.
+- **[SubHD](https://subhd.tv/) & [Zimuku (字幕库)](https://zmk.pw/)**: Invaluable subtitle repositories created and maintained for Chinese cinephiles.
+- **[AIOStreams](https://github.com/Viren070/AIOStreams) & [Harbor](https://github.com/mcaram/harbor)**: Inspiring architectural references for multi-addon aggregation and cross-platform desktop streaming.
 
 ---
 

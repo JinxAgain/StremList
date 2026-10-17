@@ -1,4 +1,9 @@
 # StremList Windows Debug Launcher
+[Console]::InputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+chcp 65001 | Out-Null
+
 $Host.UI.RawUI.WindowTitle = "StremList Addon Server - Debug Console"
 
 Set-Location $PSScriptRoot
@@ -90,9 +95,20 @@ Start-Job -ScriptBlock {
     Start-Process "http://127.0.0.1:7000/configure"
 } | Out-Null
 
-# 6. Run dev server and tee logs to debug.log
+# 6. Run server and tee logs to debug.log
 $logFile = Join-Path $PSScriptRoot "debug.log"
-& npm run dev 2>&1 | Tee-Object -FilePath $logFile
+$env:npm_config_loglevel = "error"
+$env:NODE_NO_WARNINGS = "1"
+
+$distFile = Join-Path $PSScriptRoot "dist\index.js"
+$srcIndex = Join-Path $PSScriptRoot "src\index.ts"
+$useDist = (Test-Path $distFile) -and (-not (Test-Path $srcIndex) -or ((Get-Item $distFile).LastWriteTime -ge (Get-Item $srcIndex).LastWriteTime))
+
+if ($useDist) {
+    & node "$distFile" 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $logFile
+} else {
+    & npm --silent run dev 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $logFile
+}
 
 Write-Host "`n========================================================" -ForegroundColor Yellow
 Write-Host "[Exited] Server stopped. If an issue occurred, please send debug.log to the developer." -ForegroundColor Yellow

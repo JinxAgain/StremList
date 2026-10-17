@@ -1,6 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { OpenListClient } from '../src/services/openlist/client.js';
-import { PlaybackResolver } from '../src/services/openlist/resolver.js';
+import { PlaybackResolver, clearPlayUrlCache } from '../src/services/openlist/resolver.js';
 import { AppConfig } from '../src/config.js';
 
 const mockConfig: AppConfig = {
@@ -15,6 +15,11 @@ const mockConfig: AppConfig = {
 };
 
 describe('OpenList Client & Playback Resolver', () => {
+  beforeEach(() => {
+    clearPlayUrlCache();
+    OpenListClient.clearRawUrlCache();
+    vi.restoreAllMocks();
+  });
   it('returns direct link immediately if file is already cached in default drive', async () => {
     const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
 
@@ -35,6 +40,7 @@ describe('OpenList Client & Playback Resolver', () => {
 
   it('checks fallback drive if default drive has no cache', async () => {
     const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
+    vi.spyOn(client, 'getMountedDrives').mockResolvedValue(['115', 'PikPak']);
 
     vi.spyOn(client, 'list').mockImplementation(async (path: string) => {
       if (path.startsWith('/115/')) {
@@ -61,11 +67,12 @@ describe('OpenList Client & Playback Resolver', () => {
 
   it('triggers offline task and polls until video appears on cache miss', async () => {
     const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
+    vi.spyOn(client, 'getMountedDrives').mockResolvedValue(['115']);
 
     let pollCount = 0;
     vi.spyOn(client, 'list').mockImplementation(async () => {
       pollCount++;
-      if (pollCount < 3) {
+      if (pollCount < 4) {
         return { content: [] };
       }
       return {
@@ -189,5 +196,143 @@ describe('OpenList Client & Playback Resolver', () => {
     expect(refreshSpy).toHaveBeenCalled();
     expect(res.content?.length).toBe(1);
     expect(res.content?.[0].name).toBe('test.mkv');
+  });
+
+  it('caches resolved play URLs to avoid duplicate API calls on subsequent requests', async () => {
+    const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
+    vi.spyOn(client, 'list').mockResolvedValue({
+      content: [{ name: 'Movie.2024.mkv', size: 1000, is_dir: false }]
+    });
+    const getRawSpy = vi.spyOn(client, 'getRawUrl').mockResolvedValue('https://115.com/direct/movie.mkv');
+
+    const resolver = new PlaybackResolver(client, mockConfig);
+    const url1 = await resolver.resolvePlayUrl('cachetest1', { type: 'movie' });
+    const url2 = await resolver.resolvePlayUrl('cachetest1', { type: 'movie' });
+
+    expect(url1).toBe('https://115.com/direct/movie.mkv');
+    expect(url2).toBe('https://115.com/direct/movie.mkv');
+    expect(getRawSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('coalesces concurrent in-flight resolution requests into a single OpenList call', async () => {
+    const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
+    vi.spyOn(client, 'list').mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+      return { content: [{ name: 'Concurrent.2024.mkv', size: 1000, is_dir: false }] };
+    });
+    const getRawSpy = vi.spyOn(client, 'getRawUrl').mockResolvedValue('https://115.com/direct/concurrent.mkv');
+
+    const resolver = new PlaybackResolver(client, mockConfig);
+    const [url1, url2, url3] = await Promise.all([
+      resolver.resolvePlayUrl('inflighttest', { type: 'movie' }),
+      resolver.resolvePlayUrl('inflighttest', { type: 'movie' }),
+      resolver.resolvePlayUrl('inflighttest', { type: 'movie' })
+    ]);
+
+    expect(url1).toBe('https://115.com/direct/concurrent.mkv');
+    expect(url2).toBe('https://115.com/direct/concurrent.mkv');
+    expect(url3).toBe('https://115.com/direct/concurrent.mkv');
+    expect(getRawSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to live refresh before declaring cache miss to prevent duplicate offline downloads', async () => {
+    const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
+    vi.spyOn(client, 'getMountedDrives').mockResolvedValue(['115']);
+
+    let callCount = 0;
+    vi.spyOn(client, 'list').mockImplementation(async (path: string, refresh?: boolean) => {
+      callCount++;
+      // First call (refresh: false) returns empty (stale cache)
+      if (!refresh) {
+        return { content: [] };
+      }
+      // Second call (refresh: true) returns newly arrived file
+      return {
+        content: [{ name: 'Below.S01E03.2160p.mkv', size: 5 * 1024 * 1024 * 1024, is_dir: false }]
+      };
+    });
+
+    const addOfflineSpy = vi.spyOn(client, 'addOfflineDownload');
+    vi.spyOn(client, 'getRawUrl').mockResolvedValue('https://115.com/direct/below_e03.mkv');
+
+    const resolver = new PlaybackResolver(client, mockConfig);
+    const url = await resolver.resolvePlayUrl('belowhash123', { type: 'series', season: 1, episode: 3 });
+
+    expect(url).toBe('https://115.com/direct/below_e03.mkv');
+    // Crucially: no duplicate offline download task was submitted to cloud drive!
+    expect(addOfflineSpy).not.toHaveBeenCalled();
+    expect(callCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it('skips duplicate addOfflineDownload if called again for the same infoHash within recent window', async () => {
+    const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
+    vi.spyOn(client, 'getMountedDrives').mockResolvedValue(['PikPak']);
+    vi.spyOn(client, 'list').mockResolvedValue({ content: [] });
+    const addOfflineSpy = vi.spyOn(client, 'addOfflineDownload').mockResolvedValue(true);
+
+    const fastTimeoutResolver = new PlaybackResolver(client, {
+      ...mockConfig,
+      defaultDrive: 'PikPak',
+      pollTimeout: 0.2,
+      pollInterval: 50
+    });
+
+    // First attempt times out
+    await expect(fastTimeoutResolver.resolvePlayUrl('dupetest123', { type: 'movie' })).rejects.toThrow(
+      'OFFLINE_DOWNLOAD_TIMEOUT'
+    );
+    expect(addOfflineSpy).toHaveBeenCalledTimes(1);
+
+    // Second attempt (retry after timeout) should NOT dispatch addOfflineDownload again
+    await expect(fastTimeoutResolver.resolvePlayUrl('dupetest123', { type: 'movie' })).rejects.toThrow(
+      'OFFLINE_DOWNLOAD_TIMEOUT'
+    );
+    expect(addOfflineSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('selects full movie in subdirectory over ad video file in root folder', async () => {
+    const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
+    vi.spyOn(client, 'getMountedDrives').mockResolvedValue(['PikPak']);
+
+    vi.spyOn(client, 'list').mockImplementation(async (path: string) => {
+      if (path === '/PikPak/StremList/adtesthash') {
+        return {
+          content: [
+            {
+              name: '【更多无水印高清电影请访问 www.HDBTHD.com】【更多无水印高清电影请访问 www.HDBTHD.com】.MKV',
+              size: 636976,
+              is_dir: false
+            },
+            {
+              name: '【高清影视之家发布 www.HDBTHD.com】速度与激情',
+              size: 0,
+              is_dir: true
+            }
+          ]
+        };
+      }
+      if (path === '/PikPak/StremList/adtesthash/【高清影视之家发布 www.HDBTHD.com】速度与激情') {
+        return {
+          content: [
+            {
+              name: 'The.Fast.and.the.Furious.2001.2160p.UHD.BluRay.x265.10bit.mkv',
+              size: 19 * 1024 * 1024 * 1024,
+              is_dir: false
+            }
+          ]
+        };
+      }
+      return { content: [] };
+    });
+
+    vi.spyOn(client, 'getRawUrl').mockImplementation(async (path: string) => {
+      return `https://pikpak.me/download${path}`;
+    });
+
+    const resolver = new PlaybackResolver(client, { ...mockConfig, defaultDrive: 'PikPak' });
+    const resolvedUrl = await resolver.resolvePlayUrl('adtesthash', { type: 'movie' });
+
+    expect(resolvedUrl).toContain('The.Fast.and.the.Furious.2001.2160p.UHD.BluRay.x265.10bit.mkv');
+    expect(resolvedUrl).not.toContain('更多无水印高清电影请访问');
   });
 });

@@ -21,32 +21,23 @@ const VIDEO_EXTENSIONS = new Set([
   '.wmv',
   '.flv',
   '.m4v',
-  '.webm'
+  '.webm',
+  '.iso',
+  '.m2ts'
 ]);
 
-const SAMPLE_REGEX = /(^|[._\-\s])(sample|featurette|trailer|bonus|extra)([._\-\s]|$)/i;
+const SAMPLE_REGEX = /(^|[._\-\s\[])(sample|featurette|trailer|bonus|extra|promo|preview|teaser)([._\-\s\]]|$)/i;
+
+const EXPLICIT_AD_REGEX =
+  /(?:请访问|发布页|扫码|关注公众号|宣传片|广告|片花|解压密码|防封|更多.*(?:电影|资源|高清)|最新电影发布)/i;
+
+const DOMAIN_REGEX =
+  /(?:www\.|https?:\/\/|\.com\b|\.net\b|\.cn\b|\.org\b|\.cc\b|\.tv\b|\.vip\b|\.top\b|\.xyz\b|\.me\b)/i;
 
 function getExtension(filename: string): string {
   const dotIndex = filename.lastIndexOf('.');
   if (dotIndex === -1) return '';
   return filename.slice(dotIndex).toLowerCase();
-}
-
-function isVideoFile(file: FileItem): boolean {
-  if (file.is_dir) return false;
-  return VIDEO_EXTENSIONS.has(getExtension(file.name));
-}
-
-function isSampleFile(file: FileItem): boolean {
-  // Always ignore if name explicitly contains sample/trailer keyword
-  if (SAMPLE_REGEX.test(file.name)) {
-    return true;
-  }
-  // Ignore small clips (< 90MB) if named sample
-  if (file.size < 90 * 1024 * 1024 && /sample/i.test(file.name)) {
-    return true;
-  }
-  return false;
 }
 
 function parseSeasonEpisode(filename: string): { season?: number; episode?: number } | null {
@@ -83,15 +74,62 @@ function parseSeasonEpisode(filename: string): { season?: number; episode?: numb
   return null;
 }
 
-export function matchPlayableFile(files: FileItem[], target: MatchTarget): FileItem | null {
-  const videoFiles = files.filter(f => isVideoFile(f) && !isSampleFile(f));
-  if (videoFiles.length === 0) {
+export function isVideoFile(file: FileItem): boolean {
+  if (file.is_dir) return false;
+  const ext = getExtension(file.name);
+  if (VIDEO_EXTENSIONS.has(ext)) return true;
+  // Support extensionless video files (e.g. PikPak/115 saving files named purely by infoHash or title)
+  // Media files are typically large (> 50MB)
+  if (ext === '' && file.size > 50 * 1024 * 1024) return true;
+  return false;
+}
+
+export function isAdOrSampleFile(file: FileItem, targetType?: 'movie' | 'series'): boolean {
+  // 1. Explicit ad phrases in filename indicating promo clips or ad files (under 150MB)
+  if (EXPLICIT_AD_REGEX.test(file.name) && file.size < 150 * 1024 * 1024) {
+    return true;
+  }
+
+  // 2. Sample/trailer pattern in filename with standard scene sample size limit (< 80MB)
+  if (SAMPLE_REGEX.test(file.name) && file.size < 80 * 1024 * 1024) {
+    return true;
+  }
+
+  // 3. Domain / website links in filename for tiny promo clips (< 40MB)
+  // Notice: 20-min anime or sitcom episodes (100MB-250MB) frequently contain release group tags (e.g. [rarbg.to], [nyaa.si])
+  // so we never reject files >= 40MB or files with valid episode numbers.
+  if (DOMAIN_REGEX.test(file.name) && file.size < 40 * 1024 * 1024) {
+    if (!parseSeasonEpisode(file.name)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function matchPlayableCandidate<T extends { file: FileItem }>(
+  candidates: T[],
+  target: MatchTarget
+): T | null {
+  // 1. Filter video files excluding ads and samples
+  let videoCandidates = candidates.filter(
+    (c) => isVideoFile(c.file) && !isAdOrSampleFile(c.file, target.type)
+  );
+
+  // 2. Resilient fallback: if all video files were filtered out, allow any video >= 20MB
+  if (videoCandidates.length === 0) {
+    videoCandidates = candidates.filter(
+      (c) => isVideoFile(c.file) && c.file.size >= 20 * 1024 * 1024
+    );
+  }
+
+  if (videoCandidates.length === 0) {
     return null;
   }
 
   if (target.type === 'movie') {
     // Pick the largest video file
-    return videoFiles.reduce((prev, curr) => (curr.size > prev.size ? curr : prev));
+    return videoCandidates.reduce((prev, curr) => (curr.file.size > prev.file.size ? curr : prev));
   }
 
   if (target.type === 'series') {
@@ -100,28 +138,38 @@ export function matchPlayableFile(files: FileItem[], target: MatchTarget): FileI
 
     if (targetEpisode !== undefined) {
       // 1. Try regex pattern match on filenames
-      for (const file of videoFiles) {
-        const parsed = parseSeasonEpisode(file.name);
+      const matches: T[] = [];
+      for (const candidate of videoCandidates) {
+        const parsed = parseSeasonEpisode(candidate.file.name);
         if (parsed) {
           const seasonMatch = parsed.season === undefined || parsed.season === targetSeason;
           if (seasonMatch && parsed.episode === targetEpisode) {
-            return file;
+            matches.push(candidate);
           }
         }
+      }
+      if (matches.length > 0) {
+        return matches.reduce((prev, curr) => (curr.file.size > prev.file.size ? curr : prev));
       }
     }
 
     // 2. Fallback to fileIdx if provided
-    if (target.fileIdx !== undefined && target.fileIdx >= 0 && target.fileIdx < files.length) {
-      const indexedFile = files[target.fileIdx];
-      if (isVideoFile(indexedFile)) {
-        return indexedFile;
+    if (target.fileIdx !== undefined && target.fileIdx >= 0 && target.fileIdx < candidates.length) {
+      const indexed = candidates[target.fileIdx];
+      if (isVideoFile(indexed.file)) {
+        return indexed;
       }
     }
 
     // 3. Fallback to largest video file
-    return videoFiles.reduce((prev, curr) => (curr.size > prev.size ? curr : prev));
+    return videoCandidates.reduce((prev, curr) => (curr.file.size > prev.file.size ? curr : prev));
   }
 
-  return videoFiles[0] || null;
+  return videoCandidates[0] || null;
+}
+
+export function matchPlayableFile(files: FileItem[], target: MatchTarget): FileItem | null {
+  const wrapped = files.map((f) => ({ file: f }));
+  const matched = matchPlayableCandidate(wrapped, target);
+  return matched ? matched.file : null;
 }

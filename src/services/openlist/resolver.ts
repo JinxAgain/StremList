@@ -1,12 +1,82 @@
 import { OpenListClient } from './client.js';
 import { AppConfig } from '../../config.js';
-import { MatchTarget, matchPlayableFile, FileItem } from '../matcher/file-matcher.js';
+import { MatchTarget, matchPlayableCandidate, FileItem } from '../matcher/file-matcher.js';
 
 export function normalizeDriveName(drive: string): string {
   const lower = drive.toLowerCase();
   if (lower === 'pikpak') return 'PikPak';
   if (lower === '115') return '115';
   return drive;
+}
+
+interface CachedPlayUrl {
+  url: string;
+  expiresAt: number;
+}
+
+interface PlayableCandidateItem {
+  fullPath: string;
+  file: FileItem;
+}
+
+// Module-level caches shared across resolver instances
+const playUrlCache = new Map<string, CachedPlayUrl>();
+const inFlightResolutions = new Map<string, Promise<string>>();
+const recentOfflineTasks = new Map<string, number>(); // infoHash -> timestamp
+
+export function clearPlayUrlCache(): void {
+  playUrlCache.clear();
+  inFlightResolutions.clear();
+  recentOfflineTasks.clear();
+}
+
+function buildCacheKey(infoHash: string, target: MatchTarget): string {
+  const h = infoHash.toLowerCase().trim();
+  const f = target.fileIdx !== undefined ? target.fileIdx : 'def';
+  const s = target.season !== undefined ? target.season : 'na';
+  const e = target.episode !== undefined ? target.episode : 'na';
+  return `${h}:${f}:${s}:${e}`;
+}
+
+async function collectCandidatesRecursive(
+  client: OpenListClient,
+  dirPath: string,
+  refresh: boolean,
+  depth = 0,
+  maxDepth = 3
+): Promise<PlayableCandidateItem[]> {
+  if (depth > maxDepth) return [];
+  const listResult = await client.list(dirPath, refresh).catch(() => ({ content: [] }));
+  const items = listResult.content || [];
+  if (items.length === 0) return [];
+
+  const candidates: PlayableCandidateItem[] = [];
+  const subDirs: FileItem[] = [];
+
+  for (const item of items) {
+    if (item.is_dir) {
+      subDirs.push(item);
+    } else {
+      const cleanDir = dirPath.replace(/\/+$/, '');
+      candidates.push({
+        fullPath: `${cleanDir}/${item.name}`,
+        file: item
+      });
+    }
+  }
+
+  if (subDirs.length > 0 && depth < maxDepth) {
+    const subPromises = subDirs.map((sd) => {
+      const subPath = `${dirPath.replace(/\/+$/, '')}/${sd.name}`;
+      return collectCandidatesRecursive(client, subPath, refresh, depth + 1, maxDepth);
+    });
+    const nested = await Promise.all(subPromises);
+    for (const nestedList of nested) {
+      candidates.push(...nestedList);
+    }
+  }
+
+  return candidates;
 }
 
 export class PlaybackResolver {
@@ -17,40 +87,55 @@ export class PlaybackResolver {
     return `/${actualDriveName}/StremList/${infoHash}`;
   }
 
+  async resolvePlayUrl(
+    infoHash: string,
+    target: MatchTarget,
+    onAbort?: (abortHandler: () => void) => void
+  ): Promise<string> {
+    const cacheKey = buildCacheKey(infoHash, target);
+    const now = Date.now();
+
+    // 1. Check in-memory URL cache (10 minutes TTL) to prevent hammering OpenList & PikPak
+    const cachedEntry = playUrlCache.get(cacheKey);
+    if (cachedEntry && cachedEntry.expiresAt > now) {
+      console.log(`[Resolver] ⚡ Returning cached play URL for ${infoHash} (expires in ${Math.round((cachedEntry.expiresAt - now) / 1000)}s)`);
+      return cachedEntry.url;
+    }
+
+    // 2. Coalesce concurrent in-flight resolutions for the exact same target
+    const inFlight = inFlightResolutions.get(cacheKey);
+    if (inFlight) {
+      console.log(`[Resolver] ⏳ Attaching to in-flight resolution for ${infoHash}...`);
+      return await inFlight;
+    }
+
+    // 3. Initiate resolution and cache result
+    const resolutionPromise = this.doResolvePlayUrl(infoHash, target, onAbort);
+    inFlightResolutions.set(cacheKey, resolutionPromise);
+
+    try {
+      const resolvedUrl = await resolutionPromise;
+      // Cache valid playback URL for 10 minutes
+      playUrlCache.set(cacheKey, {
+        url: resolvedUrl,
+        expiresAt: Date.now() + 10 * 60 * 1000
+      });
+      return resolvedUrl;
+    } finally {
+      inFlightResolutions.delete(cacheKey);
+    }
+  }
+
   private async findPlayableInPath(
     dirPath: string,
     target: MatchTarget,
     refresh = false
   ): Promise<{ fullPath: string; file: FileItem } | null> {
-    const listResult = await this.client.list(dirPath, refresh);
-    const items = listResult.content || [];
-    if (items.length === 0) return null;
+    const allCandidates = await collectCandidatesRecursive(this.client, dirPath, refresh, 0, 3);
+    if (allCandidates.length === 0) return null;
 
-    // Check directly in this directory
-    const matched = matchPlayableFile(items, target);
-    if (matched) {
-      return {
-        fullPath: `${dirPath.replace(/\/+$/, '')}/${matched.name}`,
-        file: matched
-      };
-    }
-
-    // Check inside subdirectories (torrents often extract into a folder)
-    const subDirs = items.filter((i) => i.is_dir);
-    for (const subDir of subDirs) {
-      const subPath = `${dirPath.replace(/\/+$/, '')}/${subDir.name}`;
-      const subList = await this.client.list(subPath, refresh);
-      const subItems = subList.content || [];
-      const subMatched = matchPlayableFile(subItems, target);
-      if (subMatched) {
-        return {
-          fullPath: `${subPath}/${subMatched.name}`,
-          file: subMatched
-        };
-      }
-    }
-
-    return null;
+    const matched = matchPlayableCandidate(allCandidates, target);
+    return matched || null;
   }
 
   private async findPlayableByTitleInDir(
@@ -59,7 +144,7 @@ export class PlaybackResolver {
     refresh = false
   ): Promise<{ fullPath: string; file: FileItem } | null> {
     if (!target.title) return null;
-    const listResult = await this.client.list(dirPath, refresh);
+    const listResult = await this.client.list(dirPath, refresh).catch(() => ({ content: [] }));
     const items = listResult.content || [];
     const cleanTarget = target.title.toLowerCase().replace(/[^a-z0-9]/g, ' ').trim();
     const keywords = cleanTarget.split(/\s+/).filter((w) => w.length > 2);
@@ -78,70 +163,100 @@ export class PlaybackResolver {
     return null;
   }
 
-  async resolvePlayUrl(
+  private async doResolvePlayUrl(
     infoHash: string,
     target: MatchTarget,
     onAbort?: (abortHandler: () => void) => void
   ): Promise<string> {
-    const primaryDrive = this.config.defaultDrive;
-    const fallbackDrive = primaryDrive.toLowerCase() === '115' ? 'pikpak' : '115';
+    const mountedDrives = await this.client.getMountedDrives();
+    const primaryDrive = normalizeDriveName(this.config.defaultDrive || '115');
 
-    const primaryPath = this.getDrivePath(primaryDrive, infoHash);
-    const fallbackPath = this.getDrivePath(fallbackDrive, infoHash);
+    // Ensure primaryDrive is checked first, followed by all other mounted drives
+    const candidateDrives = [
+      primaryDrive,
+      ...mountedDrives.map(normalizeDriveName).filter((d) => d.toLowerCase() !== primaryDrive.toLowerCase())
+    ];
 
-    console.log(`[Resolver] 🔍 Checking cache for hash ${infoHash}...`);
-    console.log(`[Resolver]    Primary path:  ${primaryPath}`);
-    console.log(`[Resolver]    Fallback path: ${fallbackPath}`);
+    console.log(`[Resolver] 🔍 Checking cache for hash ${infoHash} across drives: [${candidateDrives.join(', ')}]...`);
 
-    // 1. Fast Cache Check: Primary Drive by hash
-    const primaryCached = await this.findPlayableInPath(primaryPath, target, false);
-    if (primaryCached) {
-      console.log(`[Resolver] ⚡ Cache HIT in primary drive! Found: ${primaryCached.file.name}`);
-      const rawUrl = await this.client.getRawUrl(primaryCached.fullPath);
-      if (rawUrl) {
-        console.log(`[Resolver] 🚀 Direct URL retrieved: ${rawUrl}`);
-        return rawUrl;
+    // 1. Fast Cache Check: Check /<Drive>/StremList/<hash> for each mounted drive
+    for (const drive of candidateDrives) {
+      const drivePath = this.getDrivePath(drive, infoHash);
+      // Quick check using local OpenList index first
+      let cached = await this.findPlayableInPath(drivePath, target, false);
+      // If not found in local cache, force live refresh from cloud drive to discover newly completed files
+      // or incrementally downloaded series episodes before declaring a cache miss
+      if (!cached) {
+        cached = await this.findPlayableInPath(drivePath, target, true);
+      }
+
+      if (cached) {
+        console.log(`[Resolver] ⚡ Cache HIT in drive "${drive}"! Found: ${cached.file.name}`);
+        const rawUrl = await this.client.getRawUrl(cached.fullPath);
+        if (rawUrl) {
+          console.log(`[Resolver] 🚀 Direct URL retrieved: ${rawUrl}`);
+          return rawUrl;
+        }
       }
     }
 
-    // 2. Fast Cache Check: Fallback Drive by hash
-    const fallbackCached = await this.findPlayableInPath(fallbackPath, target, false);
-    if (fallbackCached) {
-      console.log(`[Resolver] ⚡ Cache HIT in fallback drive! Found: ${fallbackCached.file.name}`);
-      const rawUrl = await this.client.getRawUrl(fallbackCached.fullPath);
-      if (rawUrl) {
-        console.log(`[Resolver] 🚀 Direct URL retrieved: ${rawUrl}`);
-        return rawUrl;
+    // 2. Smart Title Cache Check in /<Drive>/StremList/ and /<Drive>/ across all drives
+    if (target.title) {
+      for (const drive of candidateDrives) {
+        const parentDir = `/${drive}/StremList`;
+        const rootDir = `/${drive}`;
+
+        let titleCached = await this.findPlayableByTitleInDir(parentDir, target, false);
+        if (!titleCached) {
+          titleCached = await this.findPlayableByTitleInDir(rootDir, target, false);
+        }
+
+        if (titleCached) {
+          console.log(`[Resolver] ⚡ Cache HIT in drive "${drive}" by title match! Found: ${titleCached.file.name}`);
+          const rawUrl = await this.client.getRawUrl(titleCached.fullPath);
+          if (rawUrl) {
+            console.log(`[Resolver] 🚀 Direct URL retrieved: ${rawUrl}`);
+            return rawUrl;
+          }
+        }
       }
     }
 
-    // 3. Smart Title Cache Check in /<Drive>/StremList/ and /<Drive>/
-    const parentPrimary = `/${normalizeDriveName(primaryDrive)}/StremList`;
-    const rootDrive = `/${normalizeDriveName(primaryDrive)}`;
+    // 3. Cache Miss: Add Offline Task to DEFAULT_DRIVE (config.defaultDrive)
+    const targetDrive = primaryDrive;
+    const targetPath = this.getDrivePath(targetDrive, infoHash);
+    const parentPrimary = `/${targetDrive}/StremList`;
+    const rootDrive = `/${targetDrive}`;
 
-    let titleCached = await this.findPlayableByTitleInDir(parentPrimary, target, false);
-    if (!titleCached && target.title) {
-      titleCached = await this.findPlayableByTitleInDir(rootDrive, target, false);
-    }
+    console.log(`[Resolver] ⏳ Cache MISS across all drives. Starting offline download on DEFAULT_DRIVE "${targetDrive}"...`);
+    // Ensure parent /StremList directory exists
+    await this.client.mkdir(parentPrimary).catch(() => {});
 
-    if (titleCached) {
-      console.log(`[Resolver] ⚡ Cache HIT in directory by title match! Found: ${titleCached.file.name}`);
-      const rawUrl = await this.client.getRawUrl(titleCached.fullPath);
-      if (rawUrl) {
-        console.log(`[Resolver] 🚀 Direct URL retrieved: ${rawUrl}`);
-        return rawUrl;
+    const normHash = infoHash.toLowerCase().trim();
+    const lastSubmitted = recentOfflineTasks.get(normHash);
+    const nowTs = Date.now();
+    const RECENT_TASK_TTL_MS = 15 * 60 * 1000; // 15 minutes deduplication window
+
+    if (lastSubmitted && nowTs - lastSubmitted < RECENT_TASK_TTL_MS) {
+      const elapsedAgo = Math.round((nowTs - lastSubmitted) / 1000);
+      console.log(
+        `[Resolver] ⏳ Offline task for ${infoHash} was already submitted ${elapsedAgo}s ago. Skipping duplicate submission to cloud drive and proceeding to poll...`
+      );
+    } else {
+      let magnetUrl = `magnet:?xt=urn:btih:${infoHash}`;
+      if (target.title) {
+        const cleanTitle = target.title.replace(/[\r\n\t]/g, ' ').trim();
+        if (cleanTitle) {
+          magnetUrl += `&dn=${encodeURIComponent(cleanTitle)}`;
+        }
       }
-    }
 
-    // 4. Cache Miss: Add Offline Task to Primary Drive
-    console.log(`[Resolver] ⏳ Cache MISS in both drives. Starting offline download...`);
-    // Pre-create directory so cloud drive has dedicated target folder
-    await this.client.mkdir(parentPrimary);
-    await this.client.mkdir(primaryPath);
-    const magnetUrl = `magnet:?xt=urn:btih:${infoHash}`;
-    const taskAdded = await this.client.addOfflineDownload(primaryPath, [magnetUrl], primaryDrive);
-    if (!taskAdded) {
-      console.warn(`[Resolver] ⚠️ Warning: addOfflineDownload API reported failure. Will still poll in case it queued.`);
+      recentOfflineTasks.set(normHash, nowTs);
+      const taskAdded = await this.client.addOfflineDownload(targetPath, [magnetUrl], targetDrive);
+      if (!taskAdded) {
+        console.warn(`[Resolver] ⚠️ Warning: addOfflineDownload API reported failure. Will still poll in case it queued.`);
+        recentOfflineTasks.delete(normHash);
+      }
     }
 
     // 5. Synchronous Polling Loop with Abort Detection & Timeout
@@ -174,10 +289,10 @@ export class PlaybackResolver {
           return;
         }
 
-        console.log(`[Resolver] 🔄 Polling ${primaryPath} (attempt #${pollAttempts}, elapsed ${elapsedSec}s)...`);
+        console.log(`[Resolver] 🔄 Polling ${targetPath} (attempt #${pollAttempts}, elapsed ${elapsedSec}s)...`);
 
         try {
-          let readyFile = await this.findPlayableInPath(primaryPath, target, true);
+          let readyFile = await this.findPlayableInPath(targetPath, target, true);
           if (!readyFile && target.title) {
             readyFile = await this.findPlayableByTitleInDir(parentPrimary, target, true);
           }

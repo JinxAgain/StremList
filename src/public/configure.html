@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>StremList Configuration</title>
+  <link rel="icon" type="image/png" href="/logo.png">
   <style>
     :root {
       --bg: #0f172a;
@@ -207,17 +208,17 @@
 <body>
   <div class="container">
     <div class="header">
-      <h1 class="title">StremList ⚡</h1>
+      <div style="display: flex; justify-content: center; margin-bottom: 14px;">
+        <img src="/logo.png" alt="StremList Film Noir Cinephile Logo" style="width: 88px; height: 88px; border-radius: 20px; box-shadow: 0 12px 30px -5px rgba(0, 0, 0, 0.8), 0 0 20px rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.2); transition: transform 0.25s ease;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+      </div>
+      <h1 class="title">StremList 🎬</h1>
       <p class="subtitle">Cloud offline streaming for Stremio via OpenList (115 & PikPak)</p>
+      <div style="margin-top: 8px; display: inline-flex; align-items: center; gap: 6px; padding: 4px 14px; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 9999px; font-size: 11px; font-weight: 600; color: #e2e8f0; letter-spacing: 0.5px;">
+        🎞️ v0.2.0 Film Noir Cinephile Edition
+      </div>
     </div>
 
     <form id="configForm">
-      <div style="margin-bottom: 20px; padding: 12px 14px; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 10px; font-size: 13px; line-height: 1.6; color: #a7f3d0;">
-        ✨ <strong>开机自愈与零维护设计：</strong><br>
-        • Stremio <strong>只需安装一次</strong>本插件！安装链接使用标准服务地址（<code>http://127.0.0.1:7000/manifest.json</code>）。<br>
-        • 电脑重启或 48 小时 Token 到期后，后台会自动静默续期并刷新本地 <code>.env</code>，<strong>无需重复登录，更无需在 Stremio 中重新安装插件</strong>！
-      </div>
-
       <div class="form-group">
         <label for="openlistUrl">OpenList Server URL</label>
         <input type="text" id="openlistUrl" placeholder="http://127.0.0.1:5244" value="http://127.0.0.1:5244" required>
@@ -252,7 +253,10 @@
         </select>
         <div class="help-text">Primary storage target. If content exists in either drive, it plays instantly.</div>
         <div id="drive115Tip" style="margin-top: 8px; padding: 10px 12px; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; font-size: 12px; line-height: 1.5; color: #bae6fd;">
-          💡 <strong>115 原画播放提示：</strong>115 官方 CDN 限制外部播放器直连（会触发防盗链 403 Forbidden）。请在 OpenList 后台（<a href="http://127.0.0.1:5244/@manage/storages" target="_blank" style="color: #38bdf8; text-decoration: underline;">存储管理</a>）编辑 115：开启<strong>【Web 代理】</strong>并将 WebDAV 策略设为<strong>【本地代理】</strong>（由本地 OpenList 转发原画数据流，无需占用外网带宽）。StremList 登录测试时也会自动为您优化开启！
+          💡 <strong>115 原画播放提示：</strong>115 官方 CDN 限制外部播放器直连（会触发防盗链 403 Forbidden）。请在 OpenList 后台（<a class="manageStorageLink" href="http://127.0.0.1:5244/@manage/storages" target="_blank" style="color: #38bdf8; text-decoration: underline;">存储管理</a>）编辑 115：开启<strong>【Web 代理】</strong>并将 WebDAV 策略设为<strong>【本地代理】</strong>（由本地 OpenList 转发原画数据流，无需占用外网带宽）。StremList 登录测试时也会自动为您优化开启！
+        </div>
+        <div id="drivePikPakTip" style="margin-top: 8px; padding: 10px 12px; background: rgba(168, 85, 247, 0.1); border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 8px; font-size: 12px; line-height: 1.5; color: #e9d5ff; display: none;">
+          💡 <strong>PikPak 原画播放提示：</strong>请在 OpenList 后台（<a class="manageStorageLink" href="http://127.0.0.1:5244/@manage/storages" target="_blank" style="color: #c084fc; text-decoration: underline;">存储管理</a>）编辑 PikPak：务必<strong>关闭【禁用媒体链接】</strong>（取消勾选“禁用媒体链接”，保持开启媒体链接），以允许外部播放器直接获取 PikPak 官方高速原画直链播放。StremList 登录测试时也会自动为您优化开启！
         </div>
       </div>
 
@@ -266,8 +270,54 @@
         <input type="text" id="cometUrl" value="https://comet.elfhosted.com">
       </div>
 
+      <div style="margin-top: 24px; margin-bottom: 12px; border-top: 1px solid var(--border); padding-top: 18px;">
+        <h2 style="font-size: 16px; font-weight: 700; margin-bottom: 12px; color: var(--primary); display: flex; align-items: center; gap: 8px;">
+          <span>💬</span> 中文字幕设置 (Chinese Subtitles)
+        </h2>
+      </div>
+
+      <div class="form-group" style="display: flex; align-items: center; justify-content: space-between; padding: 12px; background: rgba(15, 23, 42, 0.4); border-radius: 10px; border: 1px solid var(--border);">
+        <div>
+          <label for="subtitleEnabled" style="margin-bottom: 0; cursor: pointer;">启用中文字幕插件 (Enable Subtitles)</label>
+          <div class="help-text">自动聚合 SubHD 与 字幕库 中文字幕</div>
+        </div>
+        <input type="checkbox" id="subtitleEnabled" checked style="width: 20px; height: 20px; cursor: pointer; accent-color: var(--primary);">
+      </div>
+
+      <div class="form-group">
+        <label for="subtitleLang">默认字幕语言 (Preferred Language)</label>
+        <select id="subtitleLang">
+          <option id="subtitleLang_bilingual" value="bilingual">双语优先 (Bilingual First)</option>
+          <option id="subtitleLang_chs" value="chs">简体中文优先 (Simplified Chinese)</option>
+          <option id="subtitleLang_cht" value="cht">繁体中文优先 (Traditional Chinese)</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="subtitleSource">字幕来源 (Subtitle Providers)</label>
+        <select id="subtitleSource">
+          <option id="subtitleSource_all" value="all">聚合 (SubHD + 字幕库)</option>
+          <option id="subtitleSource_subhd" value="subhd">仅 SubHD</option>
+          <option id="subtitleSource_zimuku" value="zimuku">仅 字幕库 (Zimuku)</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="subtitleMaxResults">最大显示条数 (Max Results)</label>
+        <select id="subtitleMaxResults">
+          <option id="subtitleMax_5" value="5">5 条</option>
+          <option id="subtitleMax_8" value="8">8 条 (推荐)</option>
+          <option id="subtitleMax_10" value="10">10 条</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="subtitleProxy">字幕网络代理 (HTTP/HTTPS Proxy, 可选)</label>
+        <input type="text" id="subtitleProxy" placeholder="例如: http://127.0.0.1:7890 (留空为直连)">
+        <div class="help-text">若国内访问 SubHD / 字幕库不稳定可填写本地代理</div>
+      </div>
+
       <div class="actions">
-        <button type="button" class="btn-primary" id="installBtn">⚡ 安装到 Stremio (一次安装，永久生效)</button>
         <button type="button" class="btn-secondary" id="copyBtn">📋 复制 Stremio 插件链接</button>
         <button type="button" class="btn-success" id="saveBtn">💾 保存当前设置到本地 (.env)</button>
       </div>
@@ -290,7 +340,12 @@
         openlistToken: document.getElementById('openlistToken').value.trim(),
         defaultDrive: document.getElementById('defaultDrive').value,
         torrentioUrl: document.getElementById('torrentioUrl').value.trim(),
-        cometUrl: document.getElementById('cometUrl').value.trim()
+        cometUrl: document.getElementById('cometUrl').value.trim(),
+        subtitleEnabled: document.getElementById('subtitleEnabled') ? document.getElementById('subtitleEnabled').checked : true,
+        subtitleLang: document.getElementById('subtitleLang') ? document.getElementById('subtitleLang').value : 'bilingual',
+        subtitleSource: document.getElementById('subtitleSource') ? document.getElementById('subtitleSource').value : 'all',
+        subtitleMaxResults: document.getElementById('subtitleMaxResults') ? parseInt(document.getElementById('subtitleMaxResults').value, 10) : 8,
+        subtitleProxy: document.getElementById('subtitleProxy') ? document.getElementById('subtitleProxy').value.trim() : ''
       };
 
       try {
@@ -342,6 +397,8 @@
           } else if (data.drives && data.drives.some(d => d.toLowerCase().includes('pikpak'))) {
             select.value = 'pikpak';
           }
+          updateDriveTip();
+          updateStorageManageLinks();
         } else {
           if (data.code === 401) {
             showStatus('error', '❌ 401: 访问被拒绝。OpenList 需要管理员权限，请点击【一键获取 Token】输入密码登录。');
@@ -354,6 +411,34 @@
       }
     }
 
+    function updateDriveTip() {
+      const drive = (document.getElementById('defaultDrive').value || '').toLowerCase();
+      const tip115 = document.getElementById('drive115Tip');
+      const tipPikPak = document.getElementById('drivePikPakTip');
+
+      if (drive.includes('pikpak')) {
+        if (tip115) tip115.style.display = 'none';
+        if (tipPikPak) tipPikPak.style.display = 'block';
+      } else if (drive.includes('115')) {
+        if (tip115) tip115.style.display = 'block';
+        if (tipPikPak) tipPikPak.style.display = 'none';
+      } else {
+        if (tip115) tip115.style.display = 'none';
+        if (tipPikPak) tipPikPak.style.display = 'none';
+      }
+    }
+
+    function updateStorageManageLinks() {
+      const url = document.getElementById('openlistUrl').value.trim().replace(/\/+$/, '');
+      if (url) {
+        document.querySelectorAll('.manageStorageLink').forEach(a => {
+          a.href = `${url}/@manage/storages`;
+        });
+      }
+    }
+
+    document.getElementById('defaultDrive').addEventListener('change', updateDriveTip);
+    document.getElementById('openlistUrl').addEventListener('input', updateStorageManageLinks);
     document.getElementById('testBtn').addEventListener('click', testConnection);
 
     document.getElementById('toggleLoginBtn').addEventListener('click', () => {
@@ -398,29 +483,41 @@
       saveCurrentConfig(true);
     });
 
-    document.getElementById('installBtn').addEventListener('click', async () => {
-      await saveCurrentConfig(false);
-      const host = window.location.host;
-      const stremioUrl = `stremio://${host}/manifest.json`;
-      window.location.href = stremioUrl;
-    });
+    const installBtn = document.getElementById('installBtn');
+    if (installBtn) {
+      installBtn.addEventListener('click', async () => {
+        await saveCurrentConfig(false);
+        const host = window.location.host;
+        const stremioUrl = `stremio://${host}/manifest.json`;
+        window.location.href = stremioUrl;
+      });
+    }
 
-    document.getElementById('copyBtn').addEventListener('click', async () => {
-      await saveCurrentConfig(false);
-      const host = window.location.host;
-      const protocol = window.location.protocol;
-      const url = `${protocol}//${host}/manifest.json`;
-      const linkBox = document.getElementById('linkBox');
-      linkBox.style.display = 'block';
-      linkBox.innerHTML = `<strong>插件安装链接 (已复制):</strong><br>${url}`;
-      try {
-        await navigator.clipboard.writeText(url);
-        alert('✅ 插件链接已复制！在 Stremio 中粘贴安装一次即可永久生效。');
-      } catch (err) {}
-    });
+    const copyBtn = document.getElementById('copyBtn');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', async () => {
+        await saveCurrentConfig(false);
+        const host = window.location.host;
+        const protocol = window.location.protocol;
+        const url = `${protocol}//${host}/manifest.json`;
+        const linkBox = document.getElementById('linkBox');
+        if (linkBox) {
+          linkBox.style.display = 'block';
+          linkBox.innerHTML = `<strong>插件安装链接 (已复制):</strong><br>${url}`;
+        }
+        try {
+          await navigator.clipboard.writeText(url);
+          alert('✅ 插件链接已复制！在 Stremio 中粘贴安装一次即可永久生效。');
+        } catch (err) {
+          alert('插件安装链接：\n' + url);
+        }
+      });
+    }
 
-    // Auto-test on page load if URL is set
+    // Initialize tips and links on page load
     window.addEventListener('DOMContentLoaded', () => {
+      updateDriveTip();
+      updateStorageManageLinks();
       const currentToken = document.getElementById('openlistToken').value.trim();
       if (currentToken) {
         testConnection();

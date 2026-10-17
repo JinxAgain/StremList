@@ -44,6 +44,23 @@ export function handleConfigure(_req: Request, res: Response) {
       html = html.replace('value="https://comet.elfhosted.com"', `value="${config.cometUrl}"`);
     }
 
+    // Pre-populate subtitle configuration
+    if (!config.subtitleEnabled) {
+      html = html.replace('id="subtitleEnabled" checked', 'id="subtitleEnabled"');
+    }
+    if (config.subtitleLang) {
+      html = html.replace(`id="subtitleLang_${config.subtitleLang}"`, `id="subtitleLang_${config.subtitleLang}" selected`);
+    }
+    if (config.subtitleSource) {
+      html = html.replace(`id="subtitleSource_${config.subtitleSource}"`, `id="subtitleSource_${config.subtitleSource}" selected`);
+    }
+    if (config.subtitleMaxResults) {
+      html = html.replace(`id="subtitleMax_${config.subtitleMaxResults}"`, `id="subtitleMax_${config.subtitleMaxResults}" selected`);
+    }
+    if (config.subtitleProxy) {
+      html = html.replace('id="subtitleProxy"', `id="subtitleProxy" value="${config.subtitleProxy}"`);
+    }
+
     return res.send(html);
   } catch {
     return res.sendFile(htmlPath);
@@ -52,13 +69,31 @@ export function handleConfigure(_req: Request, res: Response) {
 
 export async function handleSaveConfig(req: Request, res: Response) {
   try {
-    const { openlistUrl, openlistToken, defaultDrive, torrentioUrl, cometUrl } = req.body || {};
+    const {
+      openlistUrl,
+      openlistToken,
+      defaultDrive,
+      torrentioUrl,
+      cometUrl,
+      subtitleEnabled,
+      subtitleLang,
+      subtitleSource,
+      subtitleMaxResults,
+      subtitleProxy
+    } = req.body || {};
+
     const updates: Record<string, string> = {};
     if (openlistUrl) updates['OPENLIST_URL'] = openlistUrl.trim().replace(/\/+$/, '');
     if (openlistToken !== undefined) updates['OPENLIST_TOKEN'] = openlistToken.trim();
     if (defaultDrive) updates['DEFAULT_DRIVE'] = defaultDrive.toLowerCase() === 'pikpak' ? 'pikpak' : '115';
-    if (torrentioUrl) updates['TORRENTIO_URL'] = torrentioUrl.trim();
-    if (cometUrl) updates['COMET_URL'] = cometUrl.trim();
+    if (torrentioUrl !== undefined) updates['TORRENTIO_URL'] = torrentioUrl.trim().replace(/\/+$/, '').replace(/\/manifest\.json$/i, '').replace(/\/+$/, '');
+    if (cometUrl !== undefined) updates['COMET_URL'] = cometUrl.trim().replace(/\/+$/, '').replace(/\/manifest\.json$/i, '').replace(/\/+$/, '');
+
+    if (subtitleEnabled !== undefined) updates['SUBTITLE_ENABLED'] = String(subtitleEnabled);
+    if (subtitleLang) updates['SUBTITLE_LANG'] = String(subtitleLang);
+    if (subtitleSource) updates['SUBTITLE_SOURCE'] = String(subtitleSource);
+    if (subtitleMaxResults !== undefined) updates['SUBTITLE_MAX_RESULTS'] = String(subtitleMaxResults);
+    if (subtitleProxy !== undefined) updates['SUBTITLE_PROXY'] = String(subtitleProxy).trim();
 
     saveConfigToEnv(updates);
     return res.json({ success: true, message: 'Configuration saved successfully to .env' });
@@ -151,12 +186,13 @@ export async function handleOpenListTest(req: Request, res: Response) {
 
       let proxyNotice: string | undefined;
       const has115 = drives.some((d: string) => d.toLowerCase().includes('115'));
-      if (has115 && token) {
+      const hasPikPak = drives.some((d: string) => d.toLowerCase().includes('pikpak'));
+      if ((has115 || hasPikPak) && token) {
         try {
           const client = new OpenListClient(cleanUrl, token);
           const enabled = await client.ensure115WebProxy();
           if (enabled) {
-            proxyNotice = '已自动为 115 开启 Web 本地代理，Stremio 可直接流畅播放！';
+            proxyNotice = '已自动检测并优化网盘配置（115 Web本地代理 / PikPak媒体直链），Stremio 可直接流畅播放！';
           }
         } catch {}
       }

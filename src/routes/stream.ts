@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { loadConfig } from '../config.js';
 import { ScraperAggregator } from '../services/scraper/aggregator.js';
+import { OpenListClient } from '../services/openlist/client.js';
 
 export async function handleStream(req: Request, res: Response) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -16,7 +17,13 @@ export async function handleStream(req: Request, res: Response) {
     }
 
     const config = loadConfig(configParam);
-    const aggregator = new ScraperAggregator(config.torrentioUrl, config.cometUrl);
+    const openlistClient = new OpenListClient(config.openlistUrl, config.openlistToken);
+    const aggregator = new ScraperAggregator(
+      config.torrentioUrl,
+      config.cometUrl,
+      openlistClient,
+      config.defaultDrive
+    );
 
     const protocol = req.headers['x-forwarded-proto'] || req.protocol;
     const host = req.get('host') || `127.0.0.1:${config.port}`;
