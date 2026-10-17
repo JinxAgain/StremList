@@ -3,13 +3,22 @@ import { loadConfig } from '../../src/config.js';
 
 describe('AppConfig Subtitle Settings', () => {
   it('loads default subtitle configuration', () => {
-    const cfg = loadConfig();
-    expect(cfg.subtitleEnabled).toBe(true);
-    expect(cfg.subtitleLang).toBe('bilingual');
-    expect(cfg.subtitleSource).toBe('all');
-    expect(cfg.subtitleMaxResults).toBe(8);
-    expect(cfg.subtitleShowOriginal).toBe(false);
-    expect(cfg.subtitleKeepOriginalFormat).toBe(false);
+    const origShow = process.env.SUBTITLE_SHOW_ORIGINAL;
+    const origFmt = process.env.SUBTITLE_KEEP_ORIGINAL_FORMAT;
+    delete process.env.SUBTITLE_SHOW_ORIGINAL;
+    delete process.env.SUBTITLE_KEEP_ORIGINAL_FORMAT;
+    try {
+      const cfg = loadConfig();
+      expect(cfg.subtitleEnabled).toBe(true);
+      expect(cfg.subtitleLang).toBe('bilingual');
+      expect(cfg.subtitleSource).toBe('all');
+      expect(cfg.subtitleMaxResults).toBe(8);
+      expect(cfg.subtitleShowOriginal).toBe(false);
+      expect(cfg.subtitleKeepOriginalFormat).toBe(false);
+    } finally {
+      if (origShow !== undefined) process.env.SUBTITLE_SHOW_ORIGINAL = origShow;
+      if (origFmt !== undefined) process.env.SUBTITLE_KEEP_ORIGINAL_FORMAT = origFmt;
+    }
   });
 
   it('parses base64 encoded subtitle configuration override', () => {

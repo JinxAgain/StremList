@@ -40,6 +40,8 @@ export interface SubtitleItem {
   url: string;
   lang: string;
   label: string;
+  title?: string;
+  name?: string;
   subtitleFileName: string;
   movieReleaseName: string;
   SubFormat: string;

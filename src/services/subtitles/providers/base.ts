@@ -365,12 +365,15 @@ export function formatSubtitleInfo(
   const tags = extractReleaseTags(cand.title || '');
 
   let label: string;
+  let filenameBody: string;
   if (options.showOriginal) {
     const cleanOrigTitle = (cand.title || query.title || 'Subtitle')
       .trim()
       .replace(/^[.\s]+/, '')
-      .replace(/\.(zip|rar|7z|tar|gz|bz2|srt|ass|ssa|vtt)$/i, '');
+      .replace(/\.(zip|rar|7z|tar|gz|bz2|srt|ass|ssa|vtt|mkv|mp4|avi)$/i, '');
     label = `${langBadge}${sourceBadge}${cleanOrigTitle}[${provTag}]`;
+    const safeOrigTitle = cleanOrigTitle.replace(/[/\\:*?"<>|]/g, ' ').trim();
+    filenameBody = `${langBadge}${sourceBadge}${safeOrigTitle}[${provTag}]`;
   } else {
     const labelParts: string[] = [langBadge];
     if (sourceBadge) labelParts.push(sourceBadge);
@@ -379,16 +382,17 @@ export function formatSubtitleInfo(
     labelParts.push(...tags);
     labelParts.push(`[${provTag}]`);
     label = labelParts.join(' · ');
+
+    const tagBracketDot = `[${langAscii}.${provTag}]`;
+    const fnParts = [dotTitle];
+    if (epTag && !fnParts.includes(epTag)) fnParts.push(epTag);
+    fnParts.push(...tags);
+    fnParts.push(tagBracketDot);
+    filenameBody = fnParts.join('.').replace(/\.+/g, '.').replace(/^[._\- ]+|[._\- ]+$/g, '');
   }
 
-  const tagBracketDot = `[${langAscii}.${provTag}]`;
-  const fnParts = [dotTitle];
-  if (epTag && !fnParts.includes(epTag)) fnParts.push(epTag);
-  fnParts.push(...tags);
-  fnParts.push(tagBracketDot);
-  let filenameBody = fnParts.join('.').replace(/\.+/g, '.').replace(/^[._\- ]+|[._\- ]+$/g, '');
-  if (filenameBody.length > 120) {
-    const truncated = filenameBody.slice(0, 120);
+  if (filenameBody.length > 150) {
+    const truncated = filenameBody.slice(0, 150);
     filenameBody = truncated.includes('.') ? truncated.slice(0, truncated.lastIndexOf('.')) : truncated;
   }
 

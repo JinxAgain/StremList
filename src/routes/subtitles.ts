@@ -195,15 +195,18 @@ export async function handleSubtitlesRequest(
         keepOriginalFormat
       });
       const rawQuery = keepOriginalFormat ? '?raw=1' : '';
-      const relPath = `/subtitles/dl/${cand.provider}/${cand.id}/${epNum}/${filename}${rawQuery}`;
+      const encodedFilename = encodeURIComponent(filename);
+      const relPath = `/subtitles/dl/${cand.provider}/${cand.id}/${epNum}/${encodedFilename}${rawQuery}`;
 
       subtitles.push({
         id: `${cand.provider}_${cand.id}_${epNum}`,
         url: `${baseUrl}${relPath}`,
         lang: 'chi',
         label,
+        title: label,
+        name: label,
         subtitleFileName: filename,
-        movieReleaseName: filename.replace(/\.[^.]+$/, ''),
+        movieReleaseName: label,
         SubFormat: format || (keepOriginalFormat ? 'ass' : 'srt'),
         path: relPath
       });

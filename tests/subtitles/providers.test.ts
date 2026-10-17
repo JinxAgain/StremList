@@ -132,8 +132,9 @@ describe('BaseProvider utilities', () => {
       mediaType: 'movie',
       title: 'Spider-Man'
     };
-    const { label, format } = formatSubtitleInfo(cand, query, { showOriginal: true, keepOriginalFormat: true });
+    const { label, filename, format } = formatSubtitleInfo(cand, query, { showOriginal: true, keepOriginalFormat: true });
     expect(label).toBe('[简][官译]蜘蛛侠：崭新之日.Spider-Man.Brand.New.Day.2026.官方简繁英粵[SubHD]');
+    expect(filename).toBe('[简][官译]蜘蛛侠：崭新之日.Spider-Man.Brand.New.Day.2026.官方简繁英粵[SubHD].ass');
     expect(format).toBe('ass');
   });
 

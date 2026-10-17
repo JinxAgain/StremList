@@ -100,4 +100,15 @@ Hello Converted SRT World
     expect(res.text).toContain('Hello Converted SRT World');
     expect(res.text).not.toContain('[Script Info]');
   });
+
+  it('downloads encoded filename with brackets and Chinese characters properly', async () => {
+    const sampleAss = `[Script Info]\nTitle: Encoded Test\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:01:00.00,0:01:02.00,Default,,0,0,0,,Chinese Subtitle\n`;
+    cacheManager.saveSubtitle('subhd_77777_0_orig.ass', Buffer.from(sampleAss, 'utf-8'));
+
+    const encoded = encodeURIComponent('[双][官译]测试原名[SubHD].ass');
+    const res = await request(app).get(`/subtitles/dl/subhd/77777/0/${encoded}?raw=1`);
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('Chinese Subtitle');
+  });
 });
+
