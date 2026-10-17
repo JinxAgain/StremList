@@ -17,6 +17,7 @@ pnpm-debug.log*
 *.zip
 _pack_temp/
 data/
+.opencode/
 
 # OS & Editor
 .DS_Store
