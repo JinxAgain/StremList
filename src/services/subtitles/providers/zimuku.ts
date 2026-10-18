@@ -7,7 +7,6 @@ import {
   extractMetaFromFilename,
   extractFilenameFromResponse,
   parseSourceTagsFromText,
-  parseLangAndBilingualFromText,
   hasChineseSubtitle
 } from './base.js';
 import { ZimukuBmpSolver } from './zimuku-solver.js';
@@ -324,19 +323,24 @@ export class ZimukuProvider extends BaseProvider {
       imdbMatched: workImdbMatched
     };
 
-    // Extract language flags from all td.tac.lang img, td.tac img, td.first img
+    // Extract language flags strictly from td.tac.lang img, td.tac img, td.first img alt/title/data-original-title
+    // User requirement: Only care about "双语", "简体中文" (or "简体"), "繁體中文" (or "繁体").
+    // Do NOT infer language or bilingual from title/filename.
     $(tr).find('td.tac.lang img, td.tac img, td.first img').each((_, img) => {
       const alt = `${$(img).attr('alt') || ''} ${$(img).attr('title') || ''} ${$(img).attr('data-original-title') || ''}`.trim();
       if (alt.includes('双语') || alt.includes('雙語')) tags.bilingual = true;
-      if (alt.includes('简体') || alt.includes('简中') || alt.toLowerCase().includes('chs')) {
+      if (alt.includes('简体中文') || alt.includes('简体') || alt.includes('简中') || alt.toLowerCase().includes('chs')) {
         if (!tags.lang.includes('chs')) tags.lang.push('chs');
       }
-      if (alt.includes('繁体') || alt.includes('繁體') || alt.includes('繁中') || alt.toLowerCase().includes('cht')) {
+      if (alt.includes('繁體中文') || alt.includes('繁体中文') || alt.includes('繁体') || alt.includes('繁體') || alt.includes('繁中') || alt.toLowerCase().includes('cht')) {
         if (!tags.lang.includes('cht')) tags.lang.push('cht');
       }
     });
 
-    parseLangAndBilingualFromText(title, tags);
+    if (tags.bilingual && tags.lang.length === 0) {
+      tags.lang.push('chs');
+    }
+
     if (!hasChineseSubtitle(tags)) return null;
 
     // Extract format badges

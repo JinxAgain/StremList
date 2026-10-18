@@ -6,7 +6,6 @@ import {
   extractFilenameFromResponse,
   SOURCE_BADGE_MAP,
   parseSourceTagsFromText,
-  parseLangAndBilingualFromText,
   hasChineseSubtitle
 } from './base.js';
 import { SubtitleCandidate, SubtitleTags, VideoQueryMeta } from '../types.js';
@@ -214,9 +213,9 @@ export class SubhdProvider extends BaseProvider {
         }
       }
 
-      if ((text.includes('简体') || text.includes('简中')) && !tags.lang.includes('chs')) tags.lang.push('chs');
-      if ((text.includes('繁体') || text.includes('繁中') || text.includes('繁體')) && !tags.lang.includes('cht')) tags.lang.push('cht');
-      if (text.includes('双语') || text.includes('中英') || text.includes('雙語')) tags.bilingual = true;
+      if ((text === '简体' || text === '简中' || text.includes('简体') || text.includes('简中')) && !tags.lang.includes('chs')) tags.lang.push('chs');
+      if ((text === '繁体' || text === '繁中' || text === '繁體' || text.includes('繁体') || text.includes('繁中') || text.includes('繁體')) && !tags.lang.includes('cht')) tags.lang.push('cht');
+      if (text === '双语' || text === '雙語' || text.includes('双语') || text.includes('雙語')) tags.bilingual = true;
 
       for (const fmt of ['ass', 'srt', 'ssa', 'vtt', 'sup']) {
         if (text.toUpperCase().includes(fmt.toUpperCase()) && !tags.fmt.includes(fmt)) {
@@ -225,8 +224,11 @@ export class SubhdProvider extends BaseProvider {
       }
     });
 
+    if (tags.bilingual && tags.lang.length === 0) {
+      tags.lang.push('chs');
+    }
+
     parseSourceTagsFromText(title, tags.source);
-    parseLangAndBilingualFromText(title, tags);
 
     // Download count parsing: SVG download icon or legacy elements
     const svgDlText = $b.find('svg.bi-download').next('span').text().trim() ||

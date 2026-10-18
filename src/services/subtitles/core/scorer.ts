@@ -151,11 +151,11 @@ export class SubtitleScorer {
       }
     }
 
-    // 4. Language preference scoring
+    // 4. Language preference scoring strictly from tags
     const tags = candidate.tags;
-    const isBilingual = tags.bilingual || titleLower.includes('双语') || titleLower.includes('中英');
-    const isCht = tags.lang.includes('cht') || /繁体|繁體|繁中|cht|big5/.test(titleLower);
-    const isChs = tags.lang.includes('chs') || /简体|简中|chs|gb/.test(titleLower);
+    const isBilingual = Boolean(tags.bilingual);
+    const isCht = tags.lang.includes('cht');
+    const isChs = tags.lang.includes('chs');
 
     if (langPref === 'bilingual') {
       if (isBilingual) score += 600.0;

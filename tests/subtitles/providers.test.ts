@@ -468,6 +468,73 @@ describe('BaseProvider utilities', () => {
     expect(candidates[0].downloadsCount).toBe(496);
   });
 
+  it('strictly parses SubHD language and bilingual from card badges without using title (e.g. 官方简繁英)', () => {
+    const subhd = new SubhdProvider();
+    const query: VideoQueryMeta = {
+      imdbId: 'tt1234567',
+      mediaType: 'movie',
+      title: 'Masterplan'
+    };
+
+    const cardHtml = `
+      <div class="bg-white shadow-sm rounded-3 mb-4">
+        <div class="f16"><a href="/a/99123">偷天父子兵</a></div>
+        <div class="view-text"><a href="/a/99123">偷天父子兵.Masterplan.2026.官方简繁英</a></div>
+        <div>
+          <span>官方字幕</span>
+          <span>简体</span>
+          <span>繁体</span>
+          <span>英语</span>
+          <span>SRT</span>
+        </div>
+      </div>
+    `;
+
+    const candidates = (subhd as any).parseSearchResults(cardHtml, 'https://subhd.tv', query);
+    expect(candidates.length).toBe(1);
+    expect(candidates[0].tags.bilingual).toBe(false);
+    expect(candidates[0].tags.lang).toEqual(['chs', 'cht']);
+    expect(candidates[0].tags.source).toContain('official');
+  });
+
+  it('strictly parses Zimuku language and bilingual from alt attributes without using title (e.g. 官方简繁英)', () => {
+    const zimuku = new ZimukuProvider();
+    const query: VideoQueryMeta = {
+      imdbId: 'tt1234567',
+      mediaType: 'movie',
+      title: 'Masterplan'
+    };
+
+    const workHtml = `
+      <div class="subs box clearfix">
+        <table id="subtb">
+          <tbody>
+            <tr>
+              <td class="first">
+                <a href="/detail/88123.html" title="偷天父子兵.Masterplan.2026.官方简繁英">
+                  <b>偷天父子兵.Masterplan.2026.官方简繁英</b>
+                </a>
+                <span class="label label-info">SRT</span>
+              </td>
+              <td class="tac lang">
+                <img src="/chs.png" alt="简体中文" />
+                <img src="/cht.png" alt="繁體中文" />
+                <img src="/en.png" alt="英语" />
+              </td>
+              <td class="tac"><i class="rating-star" title="4.0"></i></td>
+              <td class="tac">120</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    const candidates = zimuku.parseSubtitlesFromWork(workHtml, 'https://zimuku.org', query, false);
+    expect(candidates.length).toBe(1);
+    expect(candidates[0].tags.bilingual).toBe(false);
+    expect(candidates[0].tags.lang).toEqual(['chs', 'cht']);
+  });
+
   it('instantiates SubhdProvider and ZimukuProvider', () => {
     const subhd = new SubhdProvider();
     const zimuku = new ZimukuProvider();
