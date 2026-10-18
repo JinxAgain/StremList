@@ -4,7 +4,7 @@ import { loadConfig } from '../config.js';
 
 export const MANIFEST: StremioManifest = {
   id: 'org.stremio.stremlist',
-  version: '0.2.0',
+  version: '0.3.0',
   name: 'StremList (115 / PikPak)',
   description: 'Seamless cloud offline streaming for Stremio via OpenList and torrent indexers',
   logo: 'http://127.0.0.1:7000/logo.png',
@@ -41,7 +41,7 @@ export function handleManifest(req: Request, res: Response) {
 
   const manifest: StremioManifest = {
     ...MANIFEST,
-    version: '0.2.0',
+    version: '0.3.0',
     logo: `${protocol}://${host}/logo.png`,
     resources: [...MANIFEST.resources]
   };

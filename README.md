@@ -8,7 +8,7 @@
 
 > A Debrid-like Stremio addon integrating **OpenList** (115 & PikPak), torrent indexers (**Torrentio** & **Comet**), and **Chinese Subtitles** (SubHD & Zimuku) for seamless instant cloud streaming.
 
-[![Version](https://img.shields.io/badge/version-0.2.0-amber.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-0.3.0-amber.svg)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18.0.0-green.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)

@@ -8,7 +8,7 @@
 
 > 类似 Debrid 体验的 Stremio 聚合插件，深度整合 **OpenList**（115 网盘与 PikPak）、上游磁力索引器（**Torrentio** 与 **Comet**）以及**中文字幕生态**（SubHD 与 字幕库 Zimuku），实现云端极速原画秒播与原生字幕集成。
 
-[![Version](https://img.shields.io/badge/version-0.2.0-amber.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-0.3.0-amber.svg)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18.0.0-green.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)

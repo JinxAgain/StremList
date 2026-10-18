@@ -1,6 +1,6 @@
 {
   "name": "stremlist",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Stremio addon integrating OpenList (115/PikPak) and torrent scrapers (Torrentio/Comet) for seamless cloud streaming",
   "main": "dist/index.js",
   "type": "module",

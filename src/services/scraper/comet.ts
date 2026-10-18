@@ -17,7 +17,7 @@ export class CometScraper {
       const url = `${this.baseUrl}/stream/${type}/${encodeURIComponent(id)}.json`;
       const response = await axios.get<StreamResponse>(url, {
         timeout: 5000,
-        headers: { 'User-Agent': 'StremList/0.2.0' }
+        headers: { 'User-Agent': 'StremList/0.3.0' }
       });
 
       if (!response.data || !Array.isArray(response.data.streams)) {
