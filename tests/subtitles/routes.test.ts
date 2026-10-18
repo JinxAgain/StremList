@@ -110,5 +110,17 @@ Hello Converted SRT World
     expect(res.status).toBe(200);
     expect(res.text).toContain('Chinese Subtitle');
   });
+
+  it('serves generic subtitle.ext URL pattern with name query param for Harbor compatibility', async () => {
+    const sampleAss = `[Script Info]\nTitle: Harbor Subtitle Test\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:01:00.00,0:01:02.00,Default,,0,0,0,,Harbor Compatible Subtitle\n`;
+    cacheManager.saveSubtitle('subhd_66666_0_orig.ass', Buffer.from(sampleAss, 'utf-8'));
+
+    const encodedName = encodeURIComponent('Saving.Private.Ryan.1998.2160p.REMUX.[Bilingual.Zimuku].ass');
+    const res = await request(app).get(`/subtitles/dl/subhd/66666/0/subtitle.ass?name=${encodedName}&raw=1`);
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('text/plain');
+    expect(res.headers['content-disposition']).toContain(encodedName);
+    expect(res.text).toContain('Harbor Compatible Subtitle');
+  });
 });
 

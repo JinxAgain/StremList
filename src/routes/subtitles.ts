@@ -194,9 +194,10 @@ export async function handleSubtitlesRequest(
         showOriginal,
         keepOriginalFormat
       });
-      const rawQuery = keepOriginalFormat ? '?raw=1' : '';
+      const ext = format || (keepOriginalFormat ? 'ass' : 'srt');
+      const rawParam = keepOriginalFormat ? '&raw=1' : '';
       const encodedFilename = encodeURIComponent(filename);
-      const relPath = `/subtitles/dl/${cand.provider}/${cand.id}/${epNum}/${encodedFilename}${rawQuery}`;
+      const relPath = `/subtitles/dl/${cand.provider}/${cand.id}/${epNum}/subtitle.${ext}?name=${encodedFilename}${rawParam}`;
 
       subtitles.push({
         id: `${cand.provider}_${cand.id}_${epNum}`,
@@ -207,7 +208,7 @@ export async function handleSubtitlesRequest(
         name: label,
         subtitleFileName: filename,
         movieReleaseName: label,
-        SubFormat: format || (keepOriginalFormat ? 'ass' : 'srt'),
+        SubFormat: ext,
         path: relPath
       });
     }
@@ -249,6 +250,8 @@ export async function handleDownloadSubtitle(req: Request, res: Response) {
   if (cacheManager.hasSubtitle(cacheFilename)) {
     const cachedBytes = cacheManager.getSubtitle(cacheFilename);
     if (cachedBytes) {
+      const downloadName = (req.query.name as string) || filename;
+      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(downloadName)}"`);
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       res.setHeader('Cache-Control', 'public, max-age=86400');
       return res.send(cachedBytes);
@@ -333,6 +336,8 @@ export async function handleDownloadSubtitle(req: Request, res: Response) {
   cacheManager.saveSubtitle(cacheFilename, outputBuffer);
 
   // 6. Stream to player
+  const downloadName = (req.query.name as string) || filename;
+  res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(downloadName)}"`);
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Cache-Control', 'public, max-age=86400');
   return res.send(outputBuffer);
