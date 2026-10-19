@@ -65,10 +65,14 @@ if (Test-Path $pidFile) {
     Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
 }
 
-$connections = Get-NetTCPConnection -LocalPort 7000 -ErrorAction SilentlyContinue
-foreach ($conn in $connections) {
-    if ($conn.OwningProcess -and $conn.OwningProcess -ne 0) {
-        Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue
+# Fast port 7000 process cleanup using netstat (avoids slow NetTCPIP module import)
+$portMatches = netstat.exe -ano | Select-String ":7000\s+.*LISTENING\s+(\d+)"
+foreach ($match in $portMatches) {
+    if ($match.Matches.Groups[1].Value) {
+        $ownerPid = [int]$match.Matches.Groups[1].Value
+        if ($ownerPid -gt 0) {
+            Stop-Process -Id $ownerPid -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
@@ -92,16 +96,9 @@ $proc = if (Test-Path $distFile) {
     Start-Process -FilePath "node.exe" -ArgumentList "`"$tsxCli`"", "`"$entryFile`"" -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -RedirectStandardOutput $outLog -RedirectStandardError $errLog -PassThru
 }
 
-# 7. Wait briefly for server to bind and save PID
-Start-Sleep -Seconds 2
-
+# 7. Record PID
 if ($proc -and $proc.Id) {
     Set-Content -Path $pidFile -Value $proc.Id
-}
-
-$conn = Get-NetTCPConnection -LocalPort 7000 -ErrorAction SilentlyContinue
-if ($conn -and $conn.OwningProcess) {
-    Set-Content -Path $pidFile -Value $conn.OwningProcess
 }
 
 # 8. Launch configure page in default browser only if requested

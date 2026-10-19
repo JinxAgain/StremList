@@ -6,7 +6,7 @@
 
 **[ English ](README.md)** | **[ 简体中文 ](README_zh.md)**
 
-> A Debrid-like Stremio addon integrating **OpenList** (115 & PikPak), torrent indexers (**Torrentio** & **Comet**), and **Chinese Subtitles** (SubHD & Zimuku) for seamless instant cloud streaming.
+> A Debrid-like Stremio addon integrating **OpenList** (115 & PikPak), media indexers (**Torrentio** & **Comet**), and **Chinese Subtitles** (SubHD & Zimuku) for seamless instant cloud streaming.
 
 [![Version](https://img.shields.io/badge/version-0.3.0-amber.svg)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -23,16 +23,16 @@
 - **Zero Server Bandwidth (302 Direct Stream)**: Redirects players directly via HTTP 302 to the cloud download URL (`raw_url`). Video streaming consumes zero host bandwidth.
 - **115 Anti-Hotlink Protection & Local Proxy**: Automatically detects 115 streams and routes them through OpenList's native `/d/` local proxy stream with HMAC signatures, resolving `403 Forbidden` (`invalid signature`) errors on external players (Stremio / ExoPlayer / mpv).
 - **Cross-Drive Cache Sniffing**: Inspects both **115** and **PikPak** before dispatching offline download jobs. If content was previously cached in either drive, playback begins in under 500ms.
-- **Automatic Offline Task Polling**: Automatically submits magnet hashes to OpenList, polls the cloud drive directory, and redirects the moment the media file is ready.
+- **Automatic Offline Task Polling**: Automatically submits media hashes to OpenList, polls the cloud drive directory, and redirects the moment the media file is ready.
 - **Task Deduplication & Conflict Protection**: Deduplicates offline tasks within a 15-minute window to prevent player retries from spawning duplicate download jobs or duplicate folders in cloud storage.
 - **Smart Promo Ad Filtering**: Filters out release group promotional clips, website watermarks, and samples, always selecting the true full-length feature or episode.
 
 ### 2. 🔍 Intelligent Scraper Aggregator & Quality Sorter
 - **Concurrent Multi-Source Scraping**: Concurrently queries **Torrentio** and **Comet** with isolated timeouts and fault tolerance.
-- **Hash Deduplication & Seeder Merging**: Deduplicates identical torrents by `infoHash` and merges metadata, preserving the highest seeder count reported across scrapers.
-- **Smart Quality Hierarchy**: Priority ordering by resolution (4K / 2160p > 1080p > 720p), codec (Dolby Vision, HDR10+, Remux), and healthy seeder counts.
-- **Dead Stream Filtering**: Discards dead streams (0 seeders) or unplayable items, presenting only viable streams.
-- **Accurate Cloud Cache Badging**: Clearly marks cached cloud items with `[115⚡]` or `[PikPak⚡]` only when playable media files actually exist, while pending magnets display `[115🧲]`.
+- **Hash Deduplication & Source Merging**: Deduplicates identical media streams by `infoHash` and merges metadata, preserving the highest source/peer count reported across scrapers.
+- **Smart Quality Hierarchy**: Priority ordering by resolution (4K / 2160p > 1080p > 720p), codec (Dolby Vision, HDR10+, Remux), and healthy source counts.
+- **Dead Stream Filtering**: Discards dead streams (0 sources) or unplayable items, presenting only viable streams.
+- **Accurate Cloud Cache Badging**: Clearly marks cached cloud items with `[115⚡]` or `[PikPak⚡]` only when playable media files actually exist, while pending media tasks display `[115🧲]`.
 
 ### 3. 💬 Native Chinese Subtitle Ecosystem
 - **Multi-Source Subtitle Indexers**: Integrated search across **SubHD** and **Zimuku (字幕库)**.
@@ -50,7 +50,8 @@
 - **`start.bat`**: Interactive console launcher with live log streaming (enforces UTF-8 Code Page 65001, suppressing PowerShell `NativeCommandError` noise and Emoji mojibake).
 - **`start-background.vbs` / `start-background.bat`**: 100% silent background daemon with zero CMD popup window and PID tracking in `stremlist.pid`.
 - **`stop.bat`**: One-click shutdown script that terminates active server processes and frees port 7000.
-- **`autostart-enable.bat` / `autostart-disable.bat`**: One-click Windows startup integration.
+- **`autostart-enable.bat` / `autostart-disable.bat`**: One-click zero-delay Windows Scheduled Task autostart for StremList (auto-prompts for UAC Administrator elevation).
+- **`openlist-autostart-enable.bat` / `openlist-autostart-disable.bat`**: One-click zero-delay Windows Scheduled Task autostart for OpenList (auto-prompts for UAC Administrator elevation).
 - **Auto-Portable Node.js**: Automatically downloads portable Node.js LTS into `.bin` if not installed on the system.
 
 ---
@@ -112,9 +113,13 @@
    - Runs 100% silently in the background with **no command prompt window**.
    - Need to adjust settings later? Just double-click **`configure.bat`**.
 
-3. **Auto-Start on Boot**:
-   - Double-click **`autostart-enable.bat`** to register StremList in Windows Startup.
-   - Run **`autostart-disable.bat`** to remove autostart at any time.
+3. **Auto-Start on Boot (Zero-Delay Task Scheduler)**:
+   > [!NOTE]
+   > Configuring Windows Task Scheduler requires Administrator privileges. Double-clicking the `.bat` file will automatically trigger the Windows UAC elevation prompt (click **Yes** to authorize), or you can right-click the `.bat` file and select **Run as administrator**.
+
+   - Double-click **`autostart-enable.bat`** to register StremList as a Windows Scheduled Task (starts silently upon login with high priority and zero delay).
+   - Double-click **`openlist-autostart-enable.bat`** to register OpenList as a Windows Scheduled Task (automatically targets user home or existing data directory).
+   - To remove autostart at any time, run **`autostart-disable.bat`** or **`openlist-autostart-disable.bat`**.
 
 4. **Shutdown Service**:
    - Double-click **`stop.bat`** to terminate the service and free port 7000.
@@ -213,8 +218,8 @@ StremList stands on the shoulders of the open-source community and incredible me
 
 - **[OpenList](https://fox.oplist.org) / [AList](https://alist.nn.ci/)**: The powerful cloud drive mounting and offline download engine that powers 115 and PikPak storage.
 - **[Stremio](https://www.stremio.com/)**: The modern, extensible media center that revolutionizes home entertainment.
-- **[Torrentio](https://torrentio.strem.fun/)**: The quintessential torrent provider addon for Stremio.
-- **[Comet](https://github.com/g0ldy/comet)**: Exceptional, lightning-fast Stremio torrent indexing backend.
+- **[Torrentio](https://torrentio.strem.fun/)**: The quintessential media indexer addon for Stremio.
+- **[Comet](https://github.com/g0ldy/comet)**: Exceptional, lightning-fast Stremio media indexing backend.
 - **[SubHD](https://subhd.tv/) & [Zimuku (字幕库)](https://zmk.pw/)**: Invaluable subtitle repositories created and maintained for Chinese cinephiles.
 - **[AIOStreams](https://github.com/Viren070/AIOStreams) & [Harbor](https://github.com/mcaram/harbor)**: Inspiring architectural references for multi-addon aggregation and cross-platform desktop streaming.
 

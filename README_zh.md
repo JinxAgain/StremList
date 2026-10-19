@@ -6,7 +6,7 @@
 
 **[ English ](README.md)** | **[ 简体中文 ](README_zh.md)**
 
-> 类似 Debrid 体验的 Stremio 聚合插件，深度整合 **OpenList**（115 网盘与 PikPak）、上游磁力索引器（**Torrentio** 与 **Comet**）以及**中文字幕生态**（SubHD 与 字幕库 Zimuku），实现云端极速原画秒播与原生字幕集成。
+> 类似 Debrid 体验的 Stremio 聚合插件，深度整合 **OpenList**（115 网盘与 PikPak）、上游媒体索引器（**Torrentio** 与 **Comet**）以及**中文字幕生态**（SubHD 与 字幕库 Zimuku），实现云端极速原画秒播与原生字幕集成。
 
 [![Version](https://img.shields.io/badge/version-0.3.0-amber.svg)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -23,16 +23,16 @@
 - **零服务器带宽消耗 (302 原画直链)**：通过 HTTP 302 直接重定向至 OpenList 云端下载直链 (`raw_url`)，流媒体播放不消耗 StremList 主机流量。
 - **115 防盗链保护与本地代理**：自动识别 115 数据流并通过 OpenList 原生 `/d/` 本地 HMAC 代理转发，彻底解决外部播放器（Stremio / ExoPlayer / mpv）中的 `403 Forbidden` (`invalid signature`) 报错。
 - **跨网盘秒传探测**：在提交离线下载前，智能探测 **115** 与 **PikPak**。若任意网盘已缓存该资源，500ms 内即刻起播，避免重复下载。
-- **离线任务智能轮询**：自动向 OpenList 提交磁力哈希，高频轮询网盘目录，并在媒体文件就绪瞬间完成 302 起播重定向。
+- **离线任务智能轮询**：自动向 OpenList 提交媒体哈希，高频轮询网盘目录，并在媒体文件就绪瞬间完成 302 起播重定向。
 - **任务去重与防冲突保护**：内置 15 分钟离线任务去重窗口，防止播放器因超时重试向网盘重复派发相同下载任务或生成冲突重名文件夹。
 - **智能广告短片与样片过滤**：自动过滤压制组宣传短片、网址水印和 sample 样片，全局比对并始终优先选取完整正片或剧集。
 
 ### 2. 🔍 智能多源聚合与清晰度排序
 - **多源并发抓取**：并行并发检索 **Torrentio** 与 **Comet**，各源独立超时与容错隔离。
-- **Hash 去重与做种数合并**：基于 `infoHash` 合并重复磁力，并取各索引器汇报的最大做种数。
-- **影迷级画质阶梯排序**：按分辨率（4K / 2160p > 1080p > 720p）、编码与规格（Dolby Vision、HDR10+、Remux）及做种健康度自动排序。
-- **死种智能剔除**：自动过滤 0 做种数或失效磁力，只呈现真正可用的流媒体资源。
-- **精准云端秒播角标**：仅当网盘内实际存在非空媒体文件时才标记 `[115⚡]` 或 `[PikPak⚡]`，待离线磁力标注为 `[115🧲]`。
+- **Hash 去重与数据源合并**：基于 `infoHash` 合并重复媒体流，并取各索引器汇报的最大健康源数。
+- **影迷级画质阶梯排序**：按分辨率（4K / 2160p > 1080p > 720p）、编码与规格（Dolby Vision、HDR10+、Remux）及活跃源健康度自动排序。
+- **失效源智能剔除**：自动过滤 0 活跃源或失效媒体流，只呈现真正可用的流媒体资源。
+- **精准云端秒播角标**：仅当网盘内实际存在非空媒体文件时才标记 `[115⚡]` 或 `[PikPak⚡]`，待离线任务标注为 `[115🧲]`。
 
 ### 3. 💬 原生中文字幕生态
 - **多源字幕索引**：深度集成 **SubHD** 与 **字幕库 (Zimuku)** 双源索引。
@@ -50,7 +50,8 @@
 - **`start.bat`**：交互式控制台启动器，支持实时日志输出（强制 UTF-8 65001 代码页，屏蔽 PowerShell 干扰并杜绝 Emoji 乱码）。
 - **`start-background.vbs` / `start-background.bat`**：100% 静默后台运行，无任何 CMD 弹窗，支持 `stremlist.pid` 进程追踪。
 - **`stop.bat`**：一键关闭服务并释放 7000 端口。
-- **`autostart-enable.bat` / `autostart-disable.bat`**：一键注册或移除 Windows 开机自启。
+- **`autostart-enable.bat` / `autostart-disable.bat`**：一键将 StremList 注册为 Windows 任务计划程序（零延迟高优先级秒级自启，自动弹出 UAC 管理员授权）。
+- **`openlist-autostart-enable.bat` / `openlist-autostart-disable.bat`**：一键将 OpenList 注册为 Windows 任务计划程序（自动弹出 UAC 管理员授权）。
 - **便携 Node.js 自动拉取**：系统未安装 Node.js 时自动下载 LTS 便携版至 `.bin`，零环境门槛开箱即用。
 
 ---
@@ -78,7 +79,7 @@
 |  [刮削聚合与排序引擎]                  [OpenList 客户端与播放解析器]              |
 |   - 并行查询 Torrentio 与 Comet         - 跨网盘秒传探测 (115 与 PikPak)          |
 |   - infoHash 去重与元数据合并           - 离线任务智能去重与防冲突                |
-|   - 做种数合并与 4K/HDR 阶梯排序        - 树形递归发现与正片择优                  |
+|   - 数据源合并与 4K/HDR 阶梯排序        - 树形递归发现与正片择优                  |
 |                                         - 115 /d/ 本地代理流 (HMAC 签名防盗链)    |
 |                                                                                   |
 |  [中文字幕引擎]                                                                   |
@@ -89,7 +90,7 @@
        | (并发抓取)                              | (REST API)         | (字幕抓取)
        v                                         v                    v
 +--------------------------+          +--------------------+  +---------------------+
-| 上游磁力索引器           |          | OpenList 网盘服务  |  | 字幕资源库          |
+| 上游媒体索引器           |          | OpenList 网盘服务  |  | 字幕资源库          |
 | - Torrentio              |          | - 115 (/115)       |  | - SubHD             |
 | - Comet                  |          | - PikPak (/pikpak) |  | - 字幕库 (Zimuku)   |
 +--------------------------+          +--------------------+  +---------------------+
@@ -112,9 +113,13 @@
    - 100% 静默无黑框后台运行。
    - 后续如需修改配置，随时双击 **`configure.bat`** 即可打开配置页。
 
-3. **开机自启动**：
-   - 双击 **`autostart-enable.bat`** 注册 Windows 开机自启。
-   - 随时双击 **`autostart-disable.bat`** 取消开机自启。
+3. **开机自启动（任务计划程序极速秒启，需管理员权限）**：
+   > [!NOTE]
+   > 配置 Windows 任务计划程序需要管理员权限。直接双击运行 `.bat` 脚本时会自动弹出 Windows UAC 提权确认框（点击**“是”**即可），或右键选择**“以管理员身份运行”**。
+
+   - 双击 **`autostart-enable.bat`** 将 StremList 注册为 Windows 任务计划程序（登录即秒级启动，彻底避免启动文件夹延迟排队）。
+   - 双击 **`openlist-autostart-enable.bat`** 将 OpenList 注册为 Windows 任务计划程序（自动绑定用户主目录或现有数据目录）。
+   - 随时双击 **`autostart-disable.bat`** 或 **`openlist-autostart-disable.bat`** 移除开机自启。
 
 4. **关闭退出服务**：
    - 双击 **`stop.bat`** 即可优雅终止服务进程并释放 7000 端口。
@@ -213,8 +218,8 @@ StremList 离不开开源社区与优秀流媒体生态项目的启发与支持�
 
 - **[OpenList](https://fox.oplist.org) / [AList](https://alist.nn.ci/)**：卓越强大的多网盘挂载与离线下载引擎，为 115 与 PikPak 云端播放提供核心底座。
 - **[Stremio](https://www.stremio.com/)**：现代、极致且可扩展的家庭流媒体中心。
-- **[Torrentio](https://torrentio.strem.fun/)**：Stremio 社区标杆级的磁力索引与提供器。
-- **[Comet](https://github.com/g0ldy/comet)**：极速高品质的 Stremio 磁力索引后端。
+- **[Torrentio](https://torrentio.strem.fun/)**：Stremio 社区标杆级的媒体索引与提供器。
+- **[Comet](https://github.com/g0ldy/comet)**：极速高品质的 Stremio 媒体索引后端。
 - **[SubHD](https://subhd.tv/) & [字幕库 (Zimuku)](https://zmk.pw/)**：广大影迷爱好者长期维护的中文优质字幕宝库。
 - **[AIOStreams](https://github.com/Viren070/AIOStreams) & [Harbor](https://github.com/mcaram/harbor)**：提供卓越架构参考的插件聚合与桌面端流媒体播放器。
 

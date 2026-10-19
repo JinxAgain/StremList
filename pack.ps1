@@ -51,7 +51,9 @@ function Build-Package($flavor, $zipName, $enableSubtitles) {
         "configure.bat",
         "stop.bat", "stop.ps1",
         "autostart-enable.bat", "autostart-enable.ps1",
-        "autostart-disable.bat", "autostart-disable.ps1"
+        "autostart-disable.bat", "autostart-disable.ps1",
+        "openlist-autostart-enable.bat", "openlist-autostart-enable.ps1",
+        "openlist-autostart-disable.bat", "openlist-autostart-disable.ps1"
     )
     foreach ($s in $scripts) {
         if (Test-Path $s) { Copy-Item $s -Destination $tempDir }
