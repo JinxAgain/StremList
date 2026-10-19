@@ -262,12 +262,10 @@ export class ZimukuProvider extends BaseProvider {
       if (s > 1) {
         if (cleanTitle) queries.push(`${cleanTitle} ${cnS}`);
       } else {
+        if (isTtImdb) queries.push(meta.imdbId);
         if (cleanTitle) {
           queries.push(`${cleanTitle} S01`);
           queries.push(`${cleanTitle} 第一季`);
-        }
-        if (isTtImdb) queries.push(meta.imdbId);
-        if (cleanTitle) {
           queries.push(`${cleanTitle} Season 1`);
           queries.push(cleanTitle);
         }

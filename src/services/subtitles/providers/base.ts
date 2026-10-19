@@ -154,7 +154,7 @@ export function isEpisodeMatch(
 
     const rangeMatches = [
       ...Array.from(titleLower.matchAll(/(?:^|[^a-z0-9]|s\d{1,2})[eE][pP]?(\d{1,3})\s*[-~至到]\s*[eE]?[pP]?(\d{1,3})\b/gi)),
-      ...Array.from(titleLower.matchAll(/第\s*(\d{1,3})\s*[-~至到]\s*(\d{1,3})\s*[集话話]/g))
+      ...Array.from(titleLower.matchAll(/(?:^|[^a-z0-9]|第)?\s*(\d{1,3})\s*[-~至到]\s*(\d{1,3})\s*[集话話]/g))
     ];
     for (const rm of rangeMatches) {
       const startEp = parseInt(rm[1], 10);
@@ -173,13 +173,13 @@ export function isEpisodeMatch(
   }
 
   // Step 3: Season pack / collection match
-  const packRegex = /全|合集|pack|complete|\b\d+-\d+\b|全部|整季|季全|全集/i;
+  const packRegex = /全|合集|pack|complete|\b\d+-\d+\b|全部|整季|季全|全集|全\s*\d+\s*[集话話]|共\s*\d+\s*[集话話]|\.(rar|zip|7z|tar|gz)$/i;
   const isPack = packRegex.test(titleLower);
 
   if (season !== undefined) {
     const foundSeasons = extractSeasonsFromText(title);
-    const matchesTargetSeason = foundSeasons.size > 0 ? foundSeasons.has(season) : false;
-    const hasExplicitEp = /(?:[eE][pP]?|第\s*)\d+|(?:\b|\D)\d{1,2}\s*[集话話]/.test(titleLower);
+    const matchesTargetSeason = foundSeasons.size > 0 ? foundSeasons.has(season) : season === 1;
+    const hasExplicitEp = /(?:[eE][pP]?|第\s*)\d+|(?<![全共0-9~至到\-])\b\d{1,2}\s*[集话話]/.test(titleLower);
 
     if (matchesTargetSeason && (isPack || !hasExplicitEp)) {
       return [true, true];

@@ -36,6 +36,42 @@ describe('BaseProvider utilities', () => {
 
     const [rangeMatch3] = isEpisodeMatch('Show S01E01-03 1080p', 1, 4);
     expect(rangeMatch3).toBe(false);
+
+    // tt0434706 (Monster 2004) anime full pack tests
+    const [monsterPack1, isMonsterCol1] = isEpisodeMatch('怪物[全74集] Monster (2004) BD简体中文字幕 - 炎之川', 1, 12);
+    expect(monsterPack1).toBe(true);
+    expect(isMonsterCol1).toBe(true);
+
+    const [monsterPack2, isMonsterCol2] = isEpisodeMatch('怪物 官方简繁字幕 MONSTER (2004) 官方字幕', 1, 12);
+    expect(monsterPack2).toBe(true);
+    expect(isMonsterCol2).toBe(true);
+
+    const [monsterRar, isMonsterRarCol] = isEpisodeMatch('怪物 MONSTER (2004).rar', 1, 12);
+    expect(monsterRar).toBe(true);
+    expect(isMonsterRarCol).toBe(true);
+
+    const [monsterChs, isMonsterChsCol] = isEpisodeMatch('怪物.Monster.2004.(全72集)Chs', 1, 12);
+    expect(monsterChs).toBe(true);
+    expect(isMonsterChsCol).toBe(true);
+
+    // Season 2 query should not match Season 1 / unversioned pack
+    const [monsterS2] = isEpisodeMatch('怪物[全74集] Monster (2004)', 2, 12);
+    expect(monsterS2).toBe(false);
+  });
+
+  it('prioritizes meta.imdbId first for Zimuku Season 1 queries', () => {
+    const zimuku = new ZimukuProvider();
+    const queries = (zimuku as any).buildQueries({
+      mediaType: 'series',
+      imdbId: 'tt0434706',
+      title: 'Monster',
+      year: 2004,
+      season: 1,
+      episode: 12
+    });
+    expect(queries[0]).toBe('tt0434706');
+    expect(queries).toContain('Monster S01');
+    expect(queries).toContain('Monster 第一季');
   });
 
   it('parses source tags, lang tags, and checks hasChineseSubtitle', () => {
