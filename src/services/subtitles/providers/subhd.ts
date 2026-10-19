@@ -6,9 +6,16 @@ import {
   extractFilenameFromResponse,
   SOURCE_BADGE_MAP,
   parseSourceTagsFromText,
-  hasChineseSubtitle
+  hasChineseSubtitle,
+  extractSeasonsFromText
 } from './base.js';
-import { SubtitleCandidate, SubtitleTags, VideoQueryMeta } from '../types.js';
+import { SubtitleCandidate, SubtitleTags, VideoQueryMeta, SubhdSubjectItem } from '../types.js';
+
+export interface ResolvedSubhdWork {
+  dId: string;
+  exactSeason: boolean;
+  imdbMatched: boolean;
+}
 
 export class SubhdProvider extends BaseProvider {
   public readonly name = 'subhd';
@@ -46,8 +53,7 @@ export class SubhdProvider extends BaseProvider {
   }
 
   public async search(meta: VideoQueryMeta): Promise<SubtitleCandidate[]> {
-    const queries = this.buildQueries(meta);
-    if (queries.length === 0) return [];
+    if (SubhdProvider.isRateLimited()) return [];
 
     const endpoints = [this.baseUrl, ...this.fallbackUrls].filter((d, i, self) =>
       self.indexOf(d) === i && SubhdProvider.isDomainHealthy(d)
@@ -57,8 +63,55 @@ export class SubhdProvider extends BaseProvider {
     const candidates: SubtitleCandidate[] = [];
     const seenSids = new Set<string>();
 
+    let cleanTitle = (meta.title || '').trim();
+    if (!cleanTitle && meta.filename) {
+      const parsed = extractMetaFromFilename(meta.filename);
+      if (parsed.title) cleanTitle = parsed.title;
+      if (!meta.year && parsed.year) meta.year = parsed.year;
+    }
+
+    const isTtImdb = Boolean(meta.imdbId && meta.imdbId.startsWith('tt'));
+
     for (const domain of endpoints) {
+      // Stage 1: /searchD/ subject lookup
+      const subjectQueries: string[] = [];
+      if (isTtImdb) subjectQueries.push(meta.imdbId);
+      if (cleanTitle) subjectQueries.push(cleanTitle);
+
+      for (const q of subjectQueries) {
+        const isImdb = q.startsWith('tt');
+        const url = `${domain}/searchD/${encodeURIComponent(q)}`;
+        try {
+          const resp = await this.client.get(url, { timeout: 6000, validateStatus: () => true });
+          if (resp.status === 200 && resp.data) {
+            const items = this.parseItemsFromSearchD(resp.data);
+            const resolved = this.matchSubjectItem(items, meta, isImdb);
+            if (resolved) {
+              const detailCandidates = await this.fetchAndParseDetail(domain, resolved, meta);
+              for (const c of detailCandidates) {
+                if (!seenSids.has(c.id)) {
+                  seenSids.add(c.id);
+                  candidates.push(c);
+                }
+              }
+              if (candidates.length > 0) {
+                return candidates;
+              }
+            }
+          } else if (resp.status === 403) {
+            SubhdProvider.markRateLimited(600, 'HTTP 403 on searchD');
+          }
+        } catch (err: any) {
+          console.warn(`[SubHD] searchD failed for ${url}:`, err.message);
+          if (domain !== this.baseUrl) SubhdProvider.markDomainUnhealthy(domain, 600);
+        }
+      }
+
+      // Stage 2: /search/ fallback
+      const queries = this.buildQueries(meta);
+      const fetchedDids = new Set<string>();
       let foundAny = false;
+
       for (const q of queries) {
         const isImdb = q.startsWith('tt');
         const searchUrl = `${domain}/search/${encodeURIComponent(q)}`;
@@ -67,16 +120,32 @@ export class SubhdProvider extends BaseProvider {
         try {
           const resp = await this.client.get(searchUrl, { timeout: 6000, validateStatus: () => true });
           if (resp.status === 200 && typeof resp.data === 'string') {
-            const items = this.parseSearchResults(resp.data, domain, meta);
-            for (const item of items) {
-              if (isImdb) item.tags.imdbMatched = true;
-              if (!seenSids.has(item.id)) {
-                seenSids.add(item.id);
-                candidates.push(item);
-                newFound++;
+            const resolved = this.extractWorkIdFromSearchHtml(resp.data, meta, isImdb);
+            if (resolved && !fetchedDids.has(resolved.dId)) {
+              fetchedDids.add(resolved.dId);
+              const detailCandidates = await this.fetchAndParseDetail(domain, resolved, meta);
+              for (const item of detailCandidates) {
+                if (!seenSids.has(item.id)) {
+                  seenSids.add(item.id);
+                  candidates.push(item);
+                  newFound++;
+                }
               }
+              if (detailCandidates.length > 0) foundAny = true;
             }
-            if (items.length > 0) foundAny = true;
+
+            if (newFound === 0) {
+              const items = this.parseSearchResults(resp.data, domain, meta);
+              for (const item of items) {
+                if (isImdb) item.tags.imdbMatched = true;
+                if (!seenSids.has(item.id)) {
+                  seenSids.add(item.id);
+                  candidates.push(item);
+                  newFound++;
+                }
+              }
+              if (items.length > 0) foundAny = true;
+            }
           } else if (resp.status === 403) {
             SubhdProvider.markRateLimited(600, 'HTTP 403 on search');
           }
@@ -93,6 +162,55 @@ export class SubhdProvider extends BaseProvider {
     }
 
     return candidates;
+  }
+
+  private async fetchAndParseDetail(
+    domain: string,
+    resolved: ResolvedSubhdWork,
+    meta: VideoQueryMeta
+  ): Promise<SubtitleCandidate[]> {
+    const isTv = meta.mediaType === 'series' || meta.season !== undefined;
+    const targetSeason = meta.season ?? 1;
+    let currentDid = resolved.dId;
+
+    try {
+      let detailUrl = `${domain}/d/${currentDid}`;
+      let resp = await this.client.get(detailUrl, { timeout: 6000, validateStatus: () => true });
+
+      if (resp.status === 403) {
+        SubhdProvider.markRateLimited(600, 'HTTP 403 on /d/');
+        return [];
+      }
+
+      if (resp.status !== 200 || typeof resp.data !== 'string') {
+        return [];
+      }
+
+      let html = resp.data;
+
+      if (isTv) {
+        const h1Text = cheerio.load(html)('h1.view-text, h1').first().text().trim();
+        const h1Seasons = extractSeasonsFromText(h1Text);
+        const seasonMismatch = h1Seasons.size > 0 && !h1Seasons.has(targetSeason);
+
+        if (!resolved.exactSeason || seasonMismatch) {
+          const relatedDid = this.findRelatedSeasonWorkId(html, targetSeason);
+          if (relatedDid && relatedDid !== currentDid) {
+            currentDid = relatedDid;
+            detailUrl = `${domain}/d/${currentDid}`;
+            const hopResp = await this.client.get(detailUrl, { timeout: 6000, validateStatus: () => true });
+            if (hopResp.status === 200 && typeof hopResp.data === 'string') {
+              html = hopResp.data;
+            }
+          }
+        }
+      }
+
+      return this.parseDetailPage(html, domain, meta, resolved.imdbMatched);
+    } catch (err: any) {
+      console.warn(`[SubHD] Detail fetch failed for /d/${currentDid}:`, err.message);
+      return [];
+    }
   }
 
   private buildQueries(meta: VideoQueryMeta): string[] {
@@ -131,8 +249,324 @@ export class SubhdProvider extends BaseProvider {
     return Array.from(new Set(queries.map((q) => q.trim()).filter(Boolean)));
   }
 
-  private parseSearchResults(html: string, domain: string, meta: VideoQueryMeta): SubtitleCandidate[] {
+  public parseItemsFromSearchD(data: any): SubhdSubjectItem[] {
+    if (!data) return [];
+    if (Array.isArray(data?.items) && data.items.length > 0) {
+      return data.items.map((it: any) => ({
+        id: String(it.id),
+        title: String(it.title || ''),
+        title2: it.title2 ? String(it.title2) : undefined,
+        year: it.year ? String(it.year) : undefined,
+        type: it.type ? String(it.type) : undefined,
+        rating: it.rating ? String(it.rating) : undefined,
+        poster: it.poster ? String(it.poster) : undefined
+      }));
+    }
+    if (typeof data?.text === 'string' && data.text.length > 0) {
+      const $ = cheerio.load(data.text);
+      const items: SubhdSubjectItem[] = [];
+      $('a[href*="/d/"]').each((_, a) => {
+        const href = $(a).attr('href') || '';
+        const m = href.match(/(?:^|\/)d\/([0-9A-Za-z]+)/);
+        if (m) {
+          items.push({
+            id: m[1],
+            title: $(a).text().trim()
+          });
+        }
+      });
+      return items;
+    }
+    return [];
+  }
+
+  public matchSubjectItem(
+    items: SubhdSubjectItem[],
+    meta: VideoQueryMeta,
+    isImdbQuery: boolean
+  ): ResolvedSubhdWork | null {
+    if (!items || items.length === 0) return null;
+
+    const normalizeTitle = (s: string) =>
+      s.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, ' ').trim();
+
+    let pool = [...items];
+
+    if (!isImdbQuery) {
+      const cleanTitle = (meta.title || '').trim();
+      if (cleanTitle) {
+        const normClean = normalizeTitle(cleanTitle);
+        if (normClean) {
+          pool = pool.filter((item) => {
+            const normTitle = normalizeTitle(item.title || '');
+            const normTitle2 = normalizeTitle(item.title2 || '');
+            return (
+              normTitle === normClean ||
+              normTitle2 === normClean ||
+              normTitle.startsWith(normClean) ||
+              normTitle2.startsWith(normClean) ||
+              (normClean.length >= 3 && (normTitle.includes(normClean) || normTitle2.includes(normClean)))
+            );
+          });
+        }
+      }
+    }
+
+    if (pool.length === 0) return null;
+
+    const isTv = meta.mediaType === 'series' || meta.season !== undefined;
+
+    if (isTv) {
+      const targetSeason = meta.season ?? 1;
+      const tvItems = pool.filter((it) => !it.type || it.type === 'TVSeries');
+      const searchPool = tvItems.length > 0 ? tvItems : pool;
+
+      // Pass 1: exact season match
+      for (const item of searchPool) {
+        const fullText = `${item.title || ''} ${item.title2 || ''}`;
+        const seasons = extractSeasonsFromText(fullText);
+        if (seasons.has(targetSeason)) {
+          return { dId: String(item.id), exactSeason: true, imdbMatched: isImdbQuery };
+        }
+      }
+
+      // Pass 2: if targetSeason === 1, find item where extractSeasonsFromText has size === 0
+      if (targetSeason === 1) {
+        for (const item of searchPool) {
+          const fullText = `${item.title || ''} ${item.title2 || ''}`;
+          const seasons = extractSeasonsFromText(fullText);
+          if (seasons.size === 0) {
+            return { dId: String(item.id), exactSeason: true, imdbMatched: isImdbQuery };
+          }
+        }
+      }
+
+      // Pass 3: if isImdbQuery && pool.length > 0, return first item with exactSeason: false
+      if (isImdbQuery && searchPool.length > 0) {
+        return { dId: String(searchPool[0].id), exactSeason: false, imdbMatched: true };
+      }
+    } else {
+      // Movie
+      const movieItems = pool.filter((it) => !it.type || it.type === 'Movie');
+      const searchPool = movieItems.length > 0 ? movieItems : pool;
+
+      let best = searchPool[0];
+      if (meta.year) {
+        const yearMatch = searchPool.find((it) => it.year && Math.abs(parseInt(it.year, 10) - meta.year!) <= 1);
+        if (yearMatch) best = yearMatch;
+      }
+      return { dId: String(best.id), exactSeason: true, imdbMatched: isImdbQuery };
+    }
+
+    return null;
+  }
+
+  public findRelatedSeasonWorkId(html: string, targetSeason: number): string | null {
+    if (!html) return null;
     const $ = cheerio.load(html);
+    const links = $('div.col-lg-3 a[href*="/d/"], div.bg-white.shadow-sm.rounded-3.mb-3 a[href*="/d/"]').toArray();
+    for (const el of links) {
+      const $a = $(el);
+      const href = $a.attr('href') || '';
+      const m = href.match(/(?:^|\/)d\/([0-9A-Za-z]+)/);
+      if (!m) continue;
+      const text = `${$a.text()} ${$a.find('img').attr('alt') || ''} ${$a.attr('title') || ''}`.trim();
+      const seasons = extractSeasonsFromText(text);
+      if (seasons.has(targetSeason)) {
+        return m[1];
+      }
+      if (targetSeason === 1 && seasons.size === 0 && text.length > 0) {
+        return m[1];
+      }
+    }
+    return null;
+  }
+
+  public extractWorkIdFromSearchHtml(
+    html: string,
+    meta: VideoQueryMeta,
+    isImdbQuery = false
+  ): ResolvedSubhdWork | null {
+    if (!html) return null;
+    const $ = cheerio.load(html);
+    const cards = $('div.bg-white.shadow-sm.rounded-3.mb-4').toArray();
+    const isTv = meta.mediaType === 'series' || meta.season !== undefined;
+    const targetSeason = meta.season ?? 1;
+
+    for (const card of cards) {
+      const $c = $(card);
+      let dId: string | null = null;
+      let dTitle = '';
+
+      $c.find('a[href*="/d/"]').each((_, a) => {
+        const href = $(a).attr('href') || '';
+        const m = href.match(/(?:^|\/)d\/([0-9A-Za-z]+)/);
+        if (m) {
+          dId = m[1];
+          const imgAlt = $(a).find('img').attr('alt') || '';
+          const aText = $(a).text().trim();
+          dTitle = `${imgAlt} ${aText}`.trim();
+          return false;
+        }
+      });
+
+      if (!dId) continue;
+
+      const f16Text = $c.find('div.f16').text().trim();
+      const combinedTitle = `${dTitle} ${f16Text}`.trim();
+
+      if (isTv) {
+        const seasons = extractSeasonsFromText(combinedTitle);
+        if (seasons.has(targetSeason) || (targetSeason === 1 && seasons.size === 0)) {
+          return { dId, exactSeason: true, imdbMatched: isImdbQuery };
+        }
+      } else {
+        // Movie
+        return { dId, exactSeason: true, imdbMatched: isImdbQuery };
+      }
+    }
+
+    return null;
+  }
+
+  public parseDetailPage(
+    html: string,
+    domain: string,
+    meta: VideoQueryMeta,
+    imdbMatched = false
+  ): SubtitleCandidate[] {
+    if (!html) return [];
+    const $ = cheerio.load(html);
+    const isTv = meta.mediaType === 'series' || meta.season !== undefined;
+
+    const isImdbMatched = imdbMatched || Boolean(meta.imdbId && meta.imdbId.startsWith('tt') && html.includes(meta.imdbId));
+
+    if (isTv && meta.season !== undefined) {
+      const h1Text = $('h1.view-text, h1').first().text().trim();
+      const h1Seasons = extractSeasonsFromText(h1Text);
+      if (h1Seasons.size > 0 && !h1Seasons.has(meta.season)) {
+        return [];
+      }
+    }
+
+    const container = $('div.bg-white.shadow-sm.rounded-3.mb-5')
+      .filter((_, el) => $(el).find('a[href*="/a/"]').length > 0)
+      .first();
+
+    if (container.length === 0) {
+      return this.parseSearchResults(html, domain, meta);
+    }
+
+    const hasSectionHeaders = container.children('div.px-3.py-1').length > 0;
+    const items: SubtitleCandidate[] = [];
+    const seenSids = new Set<string>();
+
+    let currentSection: { type: 'none' | 'episode' | 'collection' | 'other'; episode?: number } = { type: 'none' };
+
+    for (const child of container.children().toArray()) {
+      const $el = $(child);
+
+      if ($el.is('div') && $el.hasClass('px-3') && $el.hasClass('py-1')) {
+        const secText = $el.text().trim();
+        const epMatch = secText.match(/第\s*(\d+)\s*[集话話期]/) || secText.match(/^[Ee][Pp]?\s*(\d+)$/);
+        if (epMatch) {
+          currentSection = { type: 'episode', episode: parseInt(epMatch[1], 10) };
+        } else if (/合集|全集|整季/.test(secText)) {
+          currentSection = { type: 'collection' };
+        } else {
+          currentSection = { type: 'other' };
+        }
+        continue;
+      }
+
+      if ($el.hasClass('row')) {
+        let sid: string | null = null;
+        $el.find('a[href]').each((_, a) => {
+          const href = $(a).attr('href') || '';
+          const m = href.match(/(?:^|\/)a\/([0-9A-Za-z]+)(?:$|[/?#])/);
+          if (m) {
+            sid = m[1];
+            return false;
+          }
+        });
+
+        if (!sid || seenSids.has(sid)) continue;
+
+        const title = (
+          $el.find('div.view-text a[href*="/a/"]').first().text() ||
+          $el.find('div.view-text a').first().text() ||
+          $el.find('div.view-text').first().text() ||
+          $el.find('div.f16 a').first().text() ||
+          $el.find('div.f16').first().text() ||
+          `SubHD ${sid}`
+        ).trim();
+
+        let isCollection = false;
+        let episodeMatched = false;
+
+        if (isTv && meta.episode !== undefined) {
+          if (hasSectionHeaders) {
+            if (currentSection.type === 'episode') {
+              if (currentSection.episode !== meta.episode) continue;
+              isCollection = false;
+              episodeMatched = true;
+            } else if (currentSection.type === 'collection') {
+              const rangeMatch = title.match(/[Ee][Pp]?\s*(\d{1,3})\s*[-~至到]\s*[Ee]?[Pp]?\s*(\d{1,3})/);
+              if (rangeMatch) {
+                const start = parseInt(rangeMatch[1], 10);
+                const end = parseInt(rangeMatch[2], 10);
+                if (start <= end && (meta.episode < start || meta.episode > end)) {
+                  continue;
+                }
+              }
+              isCollection = true;
+            } else {
+              const [match, col] = isEpisodeMatch(title, meta.season, meta.episode);
+              if (!match) continue;
+              isCollection = col;
+            }
+          } else {
+            const [match, col] = isEpisodeMatch(title, meta.season, meta.episode);
+            if (!match) continue;
+            isCollection = col;
+          }
+        }
+
+        const { tags, dlCount, rate } = this.parseTagsFromCard($, $el, title);
+        if (!hasChineseSubtitle(tags)) continue;
+
+        tags.collection = isCollection;
+        tags.imdbMatched = isImdbMatched;
+        if (episodeMatched) tags.episodeMatched = true;
+        if (isTv && meta.season !== undefined) tags.seasonMatched = true;
+
+        seenSids.add(sid);
+        items.push({
+          id: sid,
+          provider: 'subhd',
+          title,
+          pageUrl: `${domain}/a/${sid}`,
+          tags,
+          rate,
+          downloadsCount: dlCount,
+          score: 0
+        });
+      }
+    }
+
+    return items;
+  }
+
+  public parseSearchResults(html: string, domain: string, meta: VideoQueryMeta): SubtitleCandidate[] {
+    const $ = cheerio.load(html);
+
+    const hasDetailContainer = $('div.bg-white.shadow-sm.rounded-3.mb-5')
+      .filter((_, el) => $(el).find('div.row.pt-2.mb-2').length > 0)
+      .length > 0;
+    if (hasDetailContainer) {
+      return this.parseDetailPage(html, domain, meta);
+    }
+
     const items: SubtitleCandidate[] = [];
     const seenSids = new Set<string>();
     const isTv = meta.mediaType === 'series' || meta.season !== undefined;
@@ -148,7 +582,7 @@ export class SubhdProvider extends BaseProvider {
 
       $b.find('a[href]').each((_, a) => {
         const href = $(a).attr('href') || '';
-        const m = href.match(/^\/a\/([0-9A-Za-z]+)/);
+        const m = href.match(/(?:^|\/)a\/([0-9A-Za-z]+)(?:$|[/?#])/);
         if (m) {
           sid = m[1];
           return false;
@@ -170,7 +604,7 @@ export class SubhdProvider extends BaseProvider {
         isCollection = col;
       }
 
-      const { tags, dlCount } = this.parseTagsFromCard($, $b, title);
+      const { tags, dlCount, rate } = this.parseTagsFromCard($, $b, title);
       if (!hasChineseSubtitle(tags)) continue;
       tags.collection = isCollection;
 
@@ -180,7 +614,7 @@ export class SubhdProvider extends BaseProvider {
         title,
         pageUrl: `${domain}/a/${sid}`,
         tags,
-        rate: 0,
+        rate,
         downloadsCount: dlCount,
         score: 0
       });
@@ -189,7 +623,7 @@ export class SubhdProvider extends BaseProvider {
     return items;
   }
 
-  private parseTagsFromCard($: cheerio.CheerioAPI, $b: cheerio.Cheerio<any>, title = ''): { tags: SubtitleTags; dlCount: number } {
+  private parseTagsFromCard($: cheerio.CheerioAPI, $b: cheerio.Cheerio<any>, title = ''): { tags: SubtitleTags; dlCount: number; rate: number } {
     const tags: SubtitleTags = {
       provider: this.name,
       lang: [],
@@ -201,6 +635,7 @@ export class SubhdProvider extends BaseProvider {
     };
 
     let dlCount = 0;
+    let rate = 0;
 
     $b.find('span').each((_, span) => {
       const text = $(span).text().trim();
@@ -230,6 +665,13 @@ export class SubhdProvider extends BaseProvider {
 
     parseSourceTagsFromText(title, tags.source);
 
+    // Rate parsing: span.text-danger span.align-baseline
+    const rateText = $b.find('span.text-danger span.align-baseline').text().trim();
+    if (rateText) {
+      const parsedRate = parseFloat(rateText);
+      if (!isNaN(parsedRate)) rate = parsedRate;
+    }
+
     // Download count parsing: SVG download icon or legacy elements
     const svgDlText = $b.find('svg.bi-download').next('span').text().trim() ||
                       $b.find('svg.bi-download').parent().text().trim();
@@ -252,10 +694,13 @@ export class SubhdProvider extends BaseProvider {
       if (m) dlCount = parseInt(m[1], 10);
     }
 
-    const zuEl = $b.find('a[href^="/zu/"]').first();
+    const zuEl = $b.find('a[href*="/zu/"]').first();
     if (zuEl.length) tags.fansub = zuEl.text().trim();
 
-    return { tags, dlCount };
+    const uEl = $b.find('a[href*="/u/"]').first();
+    if (uEl.length) tags.uploader = uEl.text().trim();
+
+    return { tags, dlCount, rate };
   }
 
   public async download(candidate: SubtitleCandidate): Promise<{ buffer: Buffer; filename: string } | null> {

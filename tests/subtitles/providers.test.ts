@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import fs from 'fs';
+import path from 'path';
 import {
   extractSeasonsFromText,
   isEpisodeMatch,
@@ -203,6 +205,61 @@ describe('BaseProvider utilities', () => {
     };
     const resBi = formatSubtitleInfo(candBi, query);
     expect(resBi.label.startsWith('[双] · Test')).toBe(true);
+  });
+
+  it('formats subtitle label with Complete tag for collection candidates', () => {
+    const query: VideoQueryMeta = {
+      imdbId: 'tt17491088',
+      mediaType: 'series',
+      season: 4,
+      episode: 1,
+      title: 'The Diplomat'
+    };
+    const cand1: SubtitleCandidate = {
+      id: 'sub_col1',
+      provider: 'subhd',
+      title: 'The.Diplomat.S04.zh.subtitles',
+      pageUrl: 'http://test/a/EwYufh',
+      tags: {
+        provider: 'subhd',
+        lang: ['chs'],
+        bilingual: true,
+        fmt: ['srt'],
+        source: ['official'],
+        collection: true,
+        imdbMatched: true,
+        seasonMatched: true
+      },
+      rate: 5,
+      downloadsCount: 249,
+      score: 1500
+    };
+    const res1 = formatSubtitleInfo(cand1, query);
+    expect(res1.label).toContain('Complete');
+    expect(res1.filename).toContain('Complete');
+
+    const cand2: SubtitleCandidate = {
+      id: 'sub_col2',
+      provider: 'subhd',
+      title: 'The.Diplomat.S04.2160p.NF.WEB-DL.DDP5.1.Atmos.DV.HDR.H.265-KHN',
+      pageUrl: 'http://test/a/pQp5mk',
+      tags: {
+        provider: 'subhd',
+        lang: ['chs'],
+        bilingual: true,
+        fmt: ['srt'],
+        source: ['official'],
+        collection: true,
+        imdbMatched: true,
+        seasonMatched: true
+      },
+      rate: 5,
+      downloadsCount: 48,
+      score: 1500
+    };
+    const res2 = formatSubtitleInfo(cand2, query);
+    expect(res2.label).toContain('Complete');
+    expect(res2.filename).toContain('Complete');
   });
 
   it('parses Zimuku work page HTML with language flags, formats, ratings and filters non-Chinese', () => {
@@ -577,5 +634,250 @@ describe('BaseProvider utilities', () => {
     expect(subhd.name).toBe('subhd');
     expect(zimuku.name).toBe('zimuku');
   });
+
+  describe('SubhdProvider work ID resolution and season hopping', () => {
+    const subhd = new SubhdProvider();
+
+    it('parses items from searchD JSON and HTML fallback', () => {
+      const fromJson = subhd.parseItemsFromSearchD({
+        items: [
+          { id: 37354420, title: '头号外交官 第四季', title2: 'The Diplomat Season 4', type: 'TVSeries', year: '2026' }
+        ]
+      });
+      expect(fromJson.length).toBe(1);
+      expect(fromJson[0].id).toBe('37354420');
+      expect(fromJson[0].title).toBe('头号外交官 第四季');
+
+      const fromHtml = subhd.parseItemsFromSearchD({
+        text: '<a href="/d/37354420">头号外交官 第四季 (2026)</a>'
+      });
+      expect(fromHtml.length).toBe(1);
+      expect(fromHtml[0].id).toBe('37354420');
+      expect(fromHtml[0].title).toBe('头号外交官 第四季 (2026)');
+    });
+
+    it('matches subject item correctly for The Diplomat and Monster', () => {
+      const diplomatItems = [
+        { id: '37354420', title: '头号外交官 第四季', title2: 'The Diplomat Season 4', type: 'TVSeries', year: '2026' },
+        { id: '37006365', title: '头号外交官 第三季', title2: 'The Diplomat Season 3', type: 'TVSeries', year: '2025' },
+        { id: '36394815', title: '头号外交官 第二季', title2: 'The Diplomat Season 2', type: 'TVSeries', year: '2024' },
+        { id: '35881452', title: '头号外交官 第一季', title2: 'The Diplomat Season 1', type: 'TVSeries', year: '2023' }
+      ];
+
+      // Exact Season 4 query
+      const matchS4 = subhd.matchSubjectItem(diplomatItems, {
+        imdbId: 'tt17491088',
+        mediaType: 'series',
+        season: 4,
+        episode: 1
+      }, true);
+      expect(matchS4).toEqual({ dId: '37354420', exactSeason: true, imdbMatched: true });
+
+      // Exact Season 1 query
+      const matchS1 = subhd.matchSubjectItem(diplomatItems, {
+        imdbId: 'tt17491088',
+        mediaType: 'series',
+        season: 1,
+        episode: 1
+      }, true);
+      expect(matchS1).toEqual({ dId: '35881452', exactSeason: true, imdbMatched: true });
+
+      // Season 4 query when only Season 1 is returned in searchD items -> exactSeason is false for hopping
+      const hopCandidate = subhd.matchSubjectItem([diplomatItems[3]], {
+        imdbId: 'tt17491088',
+        mediaType: 'series',
+        season: 4,
+        episode: 1
+      }, true);
+      expect(hopCandidate).toEqual({ dId: '35881452', exactSeason: false, imdbMatched: true });
+
+      // tt0434706 (Monster 2004) unversioned anime TV series
+      const monsterItems = [
+        { id: '31034', title: '怪物', title2: 'Monster (2004)', type: 'TVSeries', year: '2004' }
+      ];
+      const matchMonster = subhd.matchSubjectItem(monsterItems, {
+        imdbId: 'tt0434706',
+        mediaType: 'series',
+        season: 1,
+        episode: 12
+      }, true);
+      expect(matchMonster).toEqual({ dId: '31034', exactSeason: true, imdbMatched: true });
+
+      // CleanTitle matching without IMDb
+      const matchTitle = subhd.matchSubjectItem(diplomatItems, {
+        imdbId: '',
+        mediaType: 'series',
+        title: 'The Diplomat',
+        season: 4,
+        episode: 1
+      }, false);
+      expect(matchTitle).toEqual({ dId: '37354420', exactSeason: true, imdbMatched: false });
+
+      // Unmatched cleanTitle
+      const noMatch = subhd.matchSubjectItem(diplomatItems, {
+        imdbId: '',
+        mediaType: 'series',
+        title: 'Completely Different Show',
+        season: 4
+      }, false);
+      expect(noMatch).toBeNull();
+    });
+
+    it('finds related season work ID from detail page HTML (同系列作品)', () => {
+      const htmlPath = path.resolve('头号外交官 第四季 The Diplomat 分享交流下载字幕平台 - SubHD.htm');
+      const html = fs.existsSync(htmlPath)
+        ? fs.readFileSync(htmlPath, 'utf8')
+        : `
+          <div class="col-lg-3">
+            <div class="bg-white shadow-sm rounded-3 mb-3">
+              <a href="/d/35881452"><img alt="头号外交官 第一季" /></a>
+              <a href="/d/36394815"><img alt="头号外交官 第二季" /></a>
+              <a href="/d/37006365"><img alt="头号外交官 第三季" /></a>
+              <a href="/d/37354420"><img alt="头号外交官 第四季" /></a>
+            </div>
+          </div>
+        `;
+
+      expect(subhd.findRelatedSeasonWorkId(html, 1)).toBe('35881452');
+      expect(subhd.findRelatedSeasonWorkId(html, 2)).toBe('36394815');
+      expect(subhd.findRelatedSeasonWorkId(html, 3)).toBe('37006365');
+      expect(subhd.findRelatedSeasonWorkId(html, 4)).toBe('37354420');
+      expect(subhd.findRelatedSeasonWorkId(html, 5)).toBeNull();
+    });
+
+    it('extracts work ID from search results HTML cards', () => {
+      const searchHtml = `
+        <div class="bg-white shadow-sm rounded-3 mb-4">
+          <div class="row">
+            <div class="col-2">
+              <a href="/d/37354420"><img alt="头号外交官 第四季" /></a>
+            </div>
+            <div class="col-10">
+              <div class="f16"><a href="/d/37354420">头号外交官 第四季 The Diplomat</a></div>
+              <div class="view-text"><a href="/a/EwYufh">The.Diplomat.S04.zh.subtitles</a></div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      // S04 query matches
+      const resS4 = subhd.extractWorkIdFromSearchHtml(searchHtml, {
+        imdbId: 'tt17491088',
+        mediaType: 'series',
+        season: 4,
+        episode: 1
+      }, true);
+      expect(resS4).toEqual({ dId: '37354420', exactSeason: true, imdbMatched: true });
+
+      // S02 query does not match
+      const resS2 = subhd.extractWorkIdFromSearchHtml(searchHtml, {
+        imdbId: 'tt17491088',
+        mediaType: 'series',
+        season: 2,
+        episode: 1
+      }, true);
+      expect(resS2).toBeNull();
+    });
+
+    it('parses detail page HTML (/d/37354420) for S04E01 and S04E08 with collections', () => {
+      const htmlPath = path.resolve('头号外交官 第四季 The Diplomat 分享交流下载字幕平台 - SubHD.htm');
+      expect(fs.existsSync(htmlPath)).toBe(true);
+      const html = fs.readFileSync(htmlPath, 'utf8');
+
+      // S04E01: should return exactly uhcNw2 (Ep 1), EwYufh (Collection 1), pQp5mk (Collection 2)
+      const resE01 = subhd.parseDetailPage(html, 'https://subhd.tv', {
+        imdbId: 'tt17491088',
+        mediaType: 'series',
+        season: 4,
+        episode: 1
+      }, true);
+
+      expect(resE01.map((c) => c.id)).toEqual(['uhcNw2', 'EwYufh', 'pQp5mk']);
+
+      const ep1 = resE01.find((c) => c.id === 'uhcNw2')!;
+      expect(ep1.tags.collection).toBe(false);
+      expect(ep1.tags.episodeMatched).toBe(true);
+      expect(ep1.tags.seasonMatched).toBe(true);
+      expect(ep1.tags.imdbMatched).toBe(true);
+      expect(ep1.tags.bilingual).toBe(true);
+      expect(ep1.tags.source).toContain('official');
+
+      const col1 = resE01.find((c) => c.id === 'EwYufh')!;
+      expect(col1.tags.collection).toBe(true);
+      expect(col1.tags.imdbMatched).toBe(true);
+      expect(col1.tags.bilingual).toBe(true);
+      expect(col1.tags.source).toContain('official');
+      expect(col1.downloadsCount).toBe(249);
+      expect(col1.tags.uploader).toBe('tk1');
+
+      const col2 = resE01.find((c) => c.id === 'pQp5mk')!;
+      expect(col2.tags.collection).toBe(true);
+      expect(col2.tags.imdbMatched).toBe(true);
+      expect(col2.tags.bilingual).toBe(true);
+      expect(col2.tags.source).toContain('official');
+      expect(col2.downloadsCount).toBe(48);
+      expect(col2.tags.uploader).toBe('yesno');
+
+      // S04E08: should return exactly eVRsd6 (Ep 8), EwYufh (Collection 1), pQp5mk (Collection 2)
+      const resE08 = subhd.parseDetailPage(html, 'https://subhd.tv', {
+        imdbId: 'tt17491088',
+        mediaType: 'series',
+        season: 4,
+        episode: 8
+      }, true);
+
+      expect(resE08.map((c) => c.id)).toEqual(['eVRsd6', 'EwYufh', 'pQp5mk']);
+      const ep8 = resE08.find((c) => c.id === 'eVRsd6')!;
+      expect(ep8.tags.collection).toBe(false);
+      expect(ep8.tags.episodeMatched).toBe(true);
+      expect(ep8.tags.seasonMatched).toBe(true);
+      expect(ep8.tags.imdbMatched).toBe(true);
+    });
+
+    it('executes full two-stage search flow (/searchD/tt17491088 -> /d/37354420)', async () => {
+      const htmlPath = path.resolve('头号外交官 第四季 The Diplomat 分享交流下载字幕平台 - SubHD.htm');
+      const html = fs.readFileSync(htmlPath, 'utf8');
+
+      const subhdInstance = new SubhdProvider();
+      const client = (subhdInstance as any).client;
+
+      vi.spyOn(client, 'get').mockImplementation(async (url: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/searchD/tt17491088')) {
+          return {
+            status: 200,
+            data: {
+              items: [
+                { id: '37354420', title: '头号外交官 第四季', title2: 'The Diplomat Season 4', type: 'TVSeries', year: '2026' }
+              ]
+            }
+          };
+        }
+        if (urlStr.includes('/d/37354420')) {
+          return {
+            status: 200,
+            data: html
+          };
+        }
+        return { status: 404, data: '' };
+      });
+
+      const results = await subhdInstance.search({
+        imdbId: 'tt17491088',
+        mediaType: 'series',
+        season: 4,
+        episode: 1,
+        title: 'The Diplomat'
+      });
+
+      expect(results.length).toBe(3);
+      expect(results.map((c) => c.id)).toEqual(['uhcNw2', 'EwYufh', 'pQp5mk']);
+      expect(results[0].tags.episodeMatched).toBe(true);
+      expect(results[1].tags.collection).toBe(true);
+      expect(results[2].tags.collection).toBe(true);
+    });
+  });
 });
+
+
 

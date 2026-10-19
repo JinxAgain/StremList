@@ -157,4 +157,90 @@ describe('SubtitleScorer', () => {
     expect(aiScore - baseScore).toBe(40);
     expect(baseScore - machineScore).toBe(50);
   });
+
+  it('correctly scores /d/<id> episode-matched and collection candidates', () => {
+    const query: VideoQueryMeta = {
+      imdbId: 'tt17491088',
+      mediaType: 'series',
+      season: 4,
+      episode: 1,
+      title: 'The Diplomat'
+    };
+
+    const cEp1: SubtitleCandidate = {
+      id: 'uhcNw2',
+      provider: 'subhd',
+      title: 'The Diplomat S04E01 Windsor 720p NF WEB-DL DD 5 1 H 264-playWEB',
+      pageUrl: 'https://subhd.tv/a/uhcNw2',
+      tags: {
+        provider: 'subhd',
+        lang: ['chs'],
+        bilingual: true,
+        fmt: ['srt', 'ass'],
+        source: ['official'],
+        collection: false,
+        imdbMatched: true,
+        episodeMatched: true,
+        seasonMatched: true
+      },
+      rate: 3,
+      downloadsCount: 329,
+      score: 0
+    };
+
+    const cCol1: SubtitleCandidate = {
+      id: 'EwYufh',
+      provider: 'subhd',
+      title: 'The.Diplomat.S04.zh.subtitles',
+      pageUrl: 'https://subhd.tv/a/EwYufh',
+      tags: {
+        provider: 'subhd',
+        lang: ['chs'],
+        bilingual: true,
+        fmt: ['srt'],
+        source: ['official'],
+        collection: true,
+        imdbMatched: true,
+        seasonMatched: true
+      },
+      rate: 0,
+      downloadsCount: 249,
+      score: 0
+    };
+
+    const cCol2: SubtitleCandidate = {
+      id: 'pQp5mk',
+      provider: 'subhd',
+      title: 'The.Diplomat.S04.2160p.NF.WEB-DL.DDP5.1.Atmos.DV.HDR.H.265-KHN',
+      pageUrl: 'https://subhd.tv/a/pQp5mk',
+      tags: {
+        provider: 'subhd',
+        lang: ['chs'],
+        bilingual: true,
+        fmt: ['ass'],
+        source: ['official'],
+        collection: true,
+        imdbMatched: true,
+        seasonMatched: true
+      },
+      rate: 0,
+      downloadsCount: 48,
+      score: 0
+    };
+
+    const scoreEp1 = SubtitleScorer.calculateScore(cEp1, query);
+    const scoreCol1 = SubtitleScorer.calculateScore(cCol1, query);
+    const scoreCol2 = SubtitleScorer.calculateScore(cCol2, query);
+
+    // Both should receive high scores (> 2500) including season match (+400) and IMDb match (+1000)
+    expect(scoreEp1).toBeGreaterThanOrEqual(2800);
+    expect(scoreCol1).toBeGreaterThanOrEqual(2950);
+    expect(scoreCol2).toBeGreaterThanOrEqual(2950);
+
+    const ranked = SubtitleScorer.rankCandidates([cEp1, cCol1, cCol2], query, 'bilingual', 5);
+    expect(ranked.map((c) => c.id)).toContain('uhcNw2');
+    expect(ranked.map((c) => c.id)).toContain('EwYufh');
+    expect(ranked.map((c) => c.id)).toContain('pQp5mk');
+  });
 });
+

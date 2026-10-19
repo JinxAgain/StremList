@@ -22,6 +22,18 @@ export interface SubtitleTags {
   uploader?: string;
   collection: boolean;
   imdbMatched: boolean;
+  episodeMatched?: boolean;
+  seasonMatched?: boolean;
+}
+
+export interface SubhdSubjectItem {
+  id: string;
+  title: string;
+  title2?: string;
+  year?: string;
+  type?: string;
+  rating?: string;
+  poster?: string;
 }
 
 export interface SubtitleCandidate {

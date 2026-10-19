@@ -1,11 +1,16 @@
 import axios, { AxiosInstance } from 'axios';
 import { SubtitleCandidate, VideoQueryMeta, FormatSubtitleOptions } from '../types.js';
 
-export const SOURCE_BADGE_MAP: Record<string, 'official' | 'ai' | 'machine'> = {
+export const SOURCE_BADGE_MAP: Record<string, 'official' | 'ai' | 'machine' | 'reprint' | 'original'> = {
   官方字幕: 'official',
   官方译本: 'official',
   官方: 'official',
   官译: 'official',
+  转载精修: 'reprint',
+  精修: 'reprint',
+  原创翻译: 'original',
+  原创: 'original',
+  自翻: 'original',
   AI校对: 'ai',
   AI润色: 'ai',
   AI翻译: 'ai',
@@ -238,7 +243,7 @@ export function extractMetaFromFilename(
   return { title, year, season, episode };
 }
 
-export function extractReleaseTags(candTitle: string): string[] {
+export function extractReleaseTags(candTitle: string, isCollection = false): string[] {
   const tags: string[] = [];
   let text = (candTitle || '').trim();
   text = text.replace(/\.(zip|rar|7z|tar|gz|bz2|srt|ass|ssa|vtt)$/i, '');
@@ -285,7 +290,9 @@ export function extractReleaseTags(candTitle: string): string[] {
   }
 
   // 7. Collection
-  if (/全\s*\d+\s*[集话話]|全集|合集|全部|整季|季全/i.test(text)) tags.push('Complete');
+  if (isCollection || /全\s*\d+\s*[集话話]|全集|合集|全部|整季|季全/i.test(text)) {
+    tags.push('Complete');
+  }
 
   if (tags.length === 0) {
     const cleanAscii = text.replace(/[^A-Za-z0-9]/g, ' ');
@@ -362,7 +369,7 @@ export function formatSubtitleInfo(
     epTag = String(query.year);
   }
 
-  const tags = extractReleaseTags(cand.title || '');
+  const tags = extractReleaseTags(cand.title || '', Boolean(cand.tags.collection));
 
   let label: string;
   let filenameBody: string;

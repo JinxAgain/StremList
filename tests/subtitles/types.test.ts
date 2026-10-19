@@ -26,7 +26,9 @@ describe('VideoQueryMeta', () => {
       fmt: ['srt'],
       source: ['official'],
       collection: false,
-      imdbMatched: true
+      imdbMatched: true,
+      episodeMatched: true,
+      seasonMatched: true
     };
     const candidate: SubtitleCandidate = {
       id: 'sub_123',
@@ -39,6 +41,8 @@ describe('VideoQueryMeta', () => {
       score: 1500
     };
     expect(candidate.tags.bilingual).toBe(true);
+    expect(candidate.tags.episodeMatched).toBe(true);
+    expect(candidate.tags.seasonMatched).toBe(true);
     expect(candidate.score).toBe(1500);
   });
 });

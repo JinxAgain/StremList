@@ -95,7 +95,7 @@ export class SubtitleScorer {
 
       if (hasSeasonConflict) {
         score -= 5000.0; // Heavy penalty if candidate title explicitly indicates a different season!
-      } else if (candSeasons.size > 0 && s !== undefined && candSeasons.has(s)) {
+      } else if ((candSeasons.size > 0 && s !== undefined && candSeasons.has(s)) || Boolean(candidate.tags.seasonMatched)) {
         score += 400.0; // Explicit season match bonus
       }
 
@@ -104,7 +104,7 @@ export class SubtitleScorer {
       const eps2 = Array.from(titleLower.matchAll(/第\s*(\d{1,3})\s*[集话話]/g)).map((m) => parseInt(m[1], 10));
       const foundEps = Array.from(new Set([...eps1, ...eps2])).sort((a, b) => a - b);
 
-      const matchedEp = foundEps.includes(ep);
+      const matchedEp = foundEps.includes(ep) || Boolean(candidate.tags.episodeMatched);
 
       // Check season match
       let seasonMatches = false;
@@ -115,7 +115,9 @@ export class SubtitleScorer {
           new RegExp(`season\\s*0*${s}\\b`, 'i'),
           new RegExp(`第\\s*0*${s}\\s*季`)
         ];
-        seasonMatches = seasonPats.some((pat) => pat.test(titleLower)) || candSeasons.has(s);
+        seasonMatches = seasonPats.some((pat) => pat.test(titleLower)) || candSeasons.has(s) || Boolean(candidate.tags.seasonMatched);
+      } else if (Boolean(candidate.tags.seasonMatched)) {
+        seasonMatches = true;
       }
 
       // Check if mentions conflicting other episode
@@ -140,7 +142,7 @@ export class SubtitleScorer {
         /全|合集|pack|complete|\b\d+-\d+\b|全部|整季|季全|全集/.test(titleLower) ||
         (seasonMatches && !matchedEp && !hasConflictingEp);
 
-      if (isSeasonPack && (seasonMatches || s === undefined)) {
+      if (isSeasonPack && !hasSeasonConflict && (seasonMatches || s === undefined || Boolean(candidate.tags.collection))) {
         score += 1150.0;
       } else if (matchedEp && !hasSeasonConflict) {
         score += 1000.0;
