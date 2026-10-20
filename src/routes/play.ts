@@ -4,9 +4,47 @@ import { OpenListClient } from '../services/openlist/client.js';
 import { PlaybackResolver } from '../services/openlist/resolver.js';
 import { MatchTarget } from '../services/matcher/file-matcher.js';
 
+function toValidInt(val: string | undefined): number | undefined {
+  if (val === undefined) return undefined;
+  const n = parseInt(val, 10);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+export function parseSeriesId(id: string): { season?: number; episode?: number } {
+  const clean = String(id || '').trim();
+  if (!clean.includes(':')) return {};
+  const parts = clean.split(':');
+  const prefix = parts[0].toLowerCase();
+
+  if (prefix === 'kitsu' || prefix === 'mal' || prefix === 'anilist' || prefix === 'anidb') {
+    if (parts.length >= 4) {
+      return { season: toValidInt(parts[2]), episode: toValidInt(parts[3]) };
+    }
+    if (parts.length === 3) {
+      return { season: undefined, episode: toValidInt(parts[2]) };
+    }
+    return {};
+  }
+
+  if (prefix === 'tmdb') {
+    if (parts.length >= 5 && (parts[1] === 'tv' || parts[1] === 'movie')) {
+      return { season: toValidInt(parts[3]), episode: toValidInt(parts[4]) };
+    }
+    if (parts.length >= 4) {
+      return { season: toValidInt(parts[2]), episode: toValidInt(parts[3]) };
+    }
+    return {};
+  }
+
+  if (parts.length >= 3) {
+    return { season: toValidInt(parts[1]), episode: toValidInt(parts[2]) };
+  }
+  return {};
+}
+
 export async function handlePlay(req: Request, res: Response) {
   const { hash: infoHash, config: configParam } = req.params;
-  const { type = 'movie', id = '', fileIdx, season, episode, title } = req.query;
+  const { type = 'movie', id = '', fileIdx, season, episode, title, filename } = req.query;
 
   if (!infoHash) {
     return res.status(400).send('Missing infoHash parameter');
@@ -20,16 +58,14 @@ export async function handlePlay(req: Request, res: Response) {
   const client = new OpenListClient(config.openlistUrl, config.openlistToken);
   const resolver = new PlaybackResolver(client, config);
 
-  // Parse season & episode from query or id (e.g., tt1234567:1:3)
+  // Parse season & episode from query or id (e.g., tt1234567:1:3, kitsu:50016:1)
   let parsedSeason: number | undefined = season ? parseInt(String(season), 10) : undefined;
   let parsedEpisode: number | undefined = episode ? parseInt(String(episode), 10) : undefined;
 
-  if (type === 'series' && String(id).includes(':')) {
-    const parts = String(id).split(':');
-    if (parts.length >= 3) {
-      if (parsedSeason === undefined) parsedSeason = parseInt(parts[1], 10);
-      if (parsedEpisode === undefined) parsedEpisode = parseInt(parts[2], 10);
-    }
+  if (type === 'series') {
+    const fromId = parseSeriesId(String(id));
+    if (parsedSeason === undefined) parsedSeason = fromId.season;
+    if (parsedEpisode === undefined) parsedEpisode = fromId.episode;
   }
 
   const target: MatchTarget = {
@@ -37,7 +73,8 @@ export async function handlePlay(req: Request, res: Response) {
     season: parsedSeason,
     episode: parsedEpisode,
     fileIdx: fileIdx !== undefined ? parseInt(String(fileIdx), 10) : undefined,
-    title: title ? String(title) : undefined
+    title: title ? String(title) : undefined,
+    filename: filename ? String(filename) : undefined
   };
 
   console.log(`[Play] 🍿 Incoming playback request for infoHash: ${infoHash}`);

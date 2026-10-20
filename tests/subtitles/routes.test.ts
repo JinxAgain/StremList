@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../src/app.js';
 import { cacheManager } from '../../src/services/subtitles/cache/manager.js';
+import { parseMediaId } from '../../src/routes/subtitles.js';
 
 describe('Subtitle & Harbor Routes', () => {
   const app = createApp();
@@ -121,6 +122,32 @@ Hello Converted SRT World
     expect(res.headers['content-type']).toContain('text/plain');
     expect(res.headers['content-disposition']).toContain(encodedName);
     expect(res.text).toContain('Harbor Compatible Subtitle');
+  });
+
+  it('parseMediaId correctly parses kitsu series IDs', () => {
+    const meta1 = parseMediaId('series', 'kitsu:50016:1');
+    expect(meta1.imdbId).toBe('kitsu:50016');
+    expect(meta1.season).toBeUndefined();
+    expect(meta1.episode).toBe(1);
+
+    const meta2 = parseMediaId('series', 'kitsu:50016:2:1');
+    expect(meta2.imdbId).toBe('kitsu:50016');
+    expect(meta2.season).toBe(2);
+    expect(meta2.episode).toBe(1);
+  });
+
+  it('routes subtitle request for kitsu:50016:1 with filename overriding season to S02', async () => {
+    cacheManager.setSearchResults('series:kitsu:50016:2:1:bilingual:all:8', [
+      { id: 'subhd_kitsu_1', lang: 'zh-CN', path: '/subtitles/dl/subhd/101/1/edgerunners.srt' }
+    ]);
+
+    const res = await request(app).get(
+      '/subtitles/series/kitsu:50016:1/filename=Cyberpunk.Edgerunners.S02E01.2160p.mkv.json'
+    );
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.subtitles)).toBe(true);
+    expect(res.body.subtitles.length).toBe(1);
+    expect(res.body.subtitles[0].path).toContain('/subtitles/dl/subhd/101/1/edgerunners.srt');
   });
 });
 

@@ -54,7 +54,11 @@ export function parseMediaId(mediaType: string, idStr: string, extra = ''): Vide
       season = parseInt(rest[0], 10) || undefined;
       episode = parseInt(rest[1], 10) || undefined;
     } else if (rest.length === 1) {
-      season = parseInt(rest[0], 10) || undefined;
+      if (cleanId.startsWith('kitsu:')) {
+        episode = parseInt(rest[0], 10) || undefined;
+      } else {
+        season = parseInt(rest[0], 10) || undefined;
+      }
     }
   } else {
     const parts = cleanId.split(':');
@@ -111,6 +115,19 @@ export async function handleSubtitlesRequest(
   const queryMeta = parseMediaId(mediaType, idStr, extra);
   const baseUrl = getPublicBaseUrl(req);
 
+  const fnMeta = queryMeta.filename ? extractMetaFromFilename(queryMeta.filename) : null;
+  if (fnMeta) {
+    if (
+      fnMeta.season !== null &&
+      (queryMeta.season === undefined || (idStr.startsWith('kitsu:') && queryMeta.season === 1))
+    ) {
+      queryMeta.season = fnMeta.season;
+    }
+    if (queryMeta.episode === undefined && fnMeta.episode !== null) {
+      queryMeta.episode = fnMeta.episode;
+    }
+  }
+
   const cacheKey = `${queryMeta.mediaType}:${queryMeta.imdbId}:${queryMeta.season ?? 0}:${queryMeta.episode ?? 0}:${langPref}:${sourcePref}:${maxResults}${showOriginal ? ':orig' : ''}${keepOriginalFormat ? ':rawfmt' : ''}`;
 
   // Check search cache
@@ -147,12 +164,9 @@ export async function handleSubtitlesRequest(
       queryMeta.imdbId = resolvedImdb;
     }
 
-    if (!title && queryMeta.filename) {
-      const fnMeta = extractMetaFromFilename(queryMeta.filename);
-      if (fnMeta.title) title = fnMeta.title;
+    if (fnMeta) {
+      if (!title && fnMeta.title) title = fnMeta.title;
       if (!year && fnMeta.year) year = fnMeta.year;
-      if (queryMeta.season === undefined && fnMeta.season !== null) queryMeta.season = fnMeta.season;
-      if (queryMeta.episode === undefined && fnMeta.episode !== null) queryMeta.episode = fnMeta.episode;
     }
 
     queryMeta.title = title;

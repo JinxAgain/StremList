@@ -153,6 +153,9 @@ export class ScraperAggregator {
       if (item.title) {
         params.set('title', item.title.split('\n')[0]);
       }
+      if (item.behaviorHints?.filename) {
+        params.set('filename', item.behaviorHints.filename);
+      }
 
       const streamUrl = `${baseUrl.replace(/\/+$/, '')}${playRoute}?${params.toString()}`;
 

@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { matchPlayableFile, FileItem } from '../src/services/matcher/file-matcher.js';
+import {
+  matchPlayableFile,
+  FileItem,
+  parseSeasonFromText,
+  parseSeasonEpisode
+} from '../src/services/matcher/file-matcher.js';
 
 describe('File Matcher Service', () => {
   it('selects the largest video file for movies and ignores samples or non-video files', () => {
@@ -132,5 +137,107 @@ describe('File Matcher Service', () => {
     const match = matchPlayableFile(files, { type: 'series', season: 1, episode: 2 });
     expect(match).not.toBeNull();
     expect(match?.name).toBe('Rick.and.Morty.S01E02.720p.HDTV.x264-[rarbg.to].mkv');
+  });
+
+  it('parses season from text correctly and rejects multi-season ranges', () => {
+    expect(parseSeasonFromText('Cyberpunk Edgerunners S02 2160p NF WEB-DL')).toBe(2);
+    expect(parseSeasonFromText('Show.S03E05.1080p')).toBe(3);
+    expect(parseSeasonFromText('Show 2nd Season')).toBe(2);
+    expect(parseSeasonFromText('Show 第3季')).toBe(3);
+    expect(parseSeasonFromText('Show S01-S03 Complete')).toBeUndefined();
+    expect(parseSeasonFromText('Show Season 1~2')).toBeUndefined();
+  });
+
+  it('parses season and episode for anime fansub patterns', () => {
+    expect(parseSeasonEpisode('[SubsPlease] Anime - 01 (1080p).mkv')).toEqual({
+      season: undefined,
+      episode: 1
+    });
+    expect(parseSeasonEpisode('[Nekomoe] Anime [01][1080p].mkv')).toEqual({
+      season: undefined,
+      episode: 1
+    });
+    expect(parseSeasonEpisode('[Group] Anime S02 - 03v2 [720p].mkv')).toEqual({
+      season: 2,
+      episode: 3
+    });
+    expect(parseSeasonEpisode('Anime.EP04.mkv')).toEqual({
+      season: undefined,
+      episode: 4
+    });
+    expect(parseSeasonEpisode('Anime.第05话.mkv')).toEqual({
+      season: undefined,
+      episode: 5
+    });
+  });
+
+  it('matches Cyberpunk.Edgerunners.S02E01 when target has season: undefined and title with S02', () => {
+    const files: FileItem[] = [
+      { name: 'Cyberpunk.Edgerunners.S01E01.1080p.mkv', size: 1024 * 1024 * 1024, is_dir: false },
+      { name: 'Cyberpunk.Edgerunners.S02E01.2160p.mkv', size: 2 * 1024 * 1024 * 1024, is_dir: false },
+      { name: 'Cyberpunk.Edgerunners.S02E02.2160p.mkv', size: 3 * 1024 * 1024 * 1024, is_dir: false }
+    ];
+
+    const match = matchPlayableFile(files, {
+      type: 'series',
+      season: undefined,
+      episode: 1,
+      title: 'Cyberpunk Edgerunners S02 2160p NF WEB-DL'
+    });
+    expect(match?.name).toBe('Cyberpunk.Edgerunners.S02E01.2160p.mkv');
+  });
+
+  it('matches S02E01 in a Season 2-only batch folder when target has season: undefined and no title', () => {
+    const files: FileItem[] = [
+      { name: 'Cyberpunk.Edgerunners.S02E01.mkv', size: 1024 * 1024 * 1024, is_dir: false },
+      { name: 'Cyberpunk.Edgerunners.S02E02.mkv', size: 1024 * 1024 * 1024, is_dir: false }
+    ];
+
+    const match = matchPlayableFile(files, {
+      type: 'series',
+      season: undefined,
+      episode: 1
+    });
+    expect(match?.name).toBe('Cyberpunk.Edgerunners.S02E01.mkv');
+  });
+
+  it('matches anime fansub filenames like SubsPlease dash format and bracket format', () => {
+    const dandadanFiles: FileItem[] = [
+      { name: '[SubsPlease] Dandadan - 01 (1080p).mkv', size: 1400 * 1024 * 1024, is_dir: false },
+      { name: '[SubsPlease] Dandadan - 02 (1080p).mkv', size: 1400 * 1024 * 1024, is_dir: false }
+    ];
+    const bleachFiles: FileItem[] = [
+      { name: '[Nekomoe] Bleach [01][1080p].mkv', size: 1200 * 1024 * 1024, is_dir: false },
+      { name: '[Nekomoe] Bleach [02][1080p].mkv', size: 1200 * 1024 * 1024, is_dir: false }
+    ];
+
+    const match1 = matchPlayableFile(dandadanFiles, {
+      type: 'series',
+      season: undefined,
+      episode: 1,
+      title: 'Dandadan'
+    });
+    expect(match1?.name).toBe('[SubsPlease] Dandadan - 01 (1080p).mkv');
+
+    const match2 = matchPlayableFile(bleachFiles, {
+      type: 'series',
+      season: undefined,
+      episode: 2,
+      title: 'Bleach'
+    });
+    expect(match2?.name).toBe('[Nekomoe] Bleach [02][1080p].mkv');
+  });
+
+  it('matches exact filename when target.filename is provided', () => {
+    const files: FileItem[] = [
+      { name: 'Show.S01E01.720p.mkv', size: 500 * 1024 * 1024, is_dir: false },
+      { name: 'Show.S01E01.1080p.mkv', size: 1200 * 1024 * 1024, is_dir: false }
+    ];
+
+    const match = matchPlayableFile(files, {
+      type: 'series',
+      filename: 'Show.S01E01.720p.mkv'
+    });
+    expect(match?.name).toBe('Show.S01E01.720p.mkv');
   });
 });

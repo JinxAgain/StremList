@@ -1,7 +1,9 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { saveConfigToEnv } from '../src/config.js';
+import { parseSeriesId } from '../src/routes/play.js';
+import { OpenListClient } from '../src/services/openlist/client.js';
 
 describe('HTTP Routes & Stremio Addon Protocol', () => {
   const app = createApp();
@@ -119,5 +121,35 @@ describe('HTTP Routes & Stremio Addon Protocol', () => {
       delete process.env.SUBTITLE_SHOW_ORIGINAL;
       delete process.env.SUBTITLE_KEEP_ORIGINAL_FORMAT;
     }
+  });
+
+  it('GET /play/:hash with kitsu:50016:1 and title S02 resolves S02E01 even when S02E05 is first and larger', async () => {
+    const hash = 'edgerunnershash123';
+    vi.spyOn(OpenListClient.prototype, 'list').mockResolvedValue({
+      content: [
+        { name: 'Cyberpunk.Edgerunners.S02E05.2160p.mkv', size: 4 * 1024 * 1024 * 1024, is_dir: false },
+        { name: 'Cyberpunk.Edgerunners.S02E01.2160p.mkv', size: 2 * 1024 * 1024 * 1024, is_dir: false }
+      ]
+    });
+    vi.spyOn(OpenListClient.prototype, 'getRawUrl').mockImplementation(async (filePath: string) => {
+      return `https://115.com/direct/${filePath}`;
+    });
+
+    const res = await request(app).get(
+      `/play/${hash}?type=series&id=kitsu:50016:1&fileIdx=0&title=Cyberpunk+Edgerunners+S02+2160p`
+    );
+
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toContain('Cyberpunk.Edgerunners.S02E01.2160p.mkv');
+  });
+});
+
+describe('parseSeriesId', () => {
+  it('correctly parses kitsu, tmdb, and standard series IDs', () => {
+    expect(parseSeriesId('kitsu:50016:1')).toEqual({ season: undefined, episode: 1 });
+    expect(parseSeriesId('kitsu:50016:2:1')).toEqual({ season: 2, episode: 1 });
+    expect(parseSeriesId('tmdb:1399:2:1')).toEqual({ season: 2, episode: 1 });
+    expect(parseSeriesId('tmdb:tv:1399:2:1')).toEqual({ season: 2, episode: 1 });
+    expect(parseSeriesId('tt12590266:2:1')).toEqual({ season: 2, episode: 1 });
   });
 });

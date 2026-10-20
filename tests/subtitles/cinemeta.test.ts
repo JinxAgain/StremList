@@ -28,4 +28,26 @@ describe('CinemetaClient', () => {
     expect(res.year).toBe(2024);
     expect(res.resolvedImdb).toBe('tt15239678');
   });
+
+  it('resolves Kitsu ID to title, year, and IMDb ID via anime-kitsu', async () => {
+    vi.mocked(axios.get).mockResolvedValueOnce({
+      status: 200,
+      data: {
+        meta: {
+          name: 'Cyberpunk: Edgerunners',
+          year: '2022',
+          imdb_id: 'tt12590266'
+        }
+      }
+    } as any);
+
+    const res = await CinemetaClient.resolveMediaInfo('series', 'kitsu:50016');
+    expect(res.title).toBe('Cyberpunk: Edgerunners');
+    expect(res.year).toBe(2022);
+    expect(res.resolvedImdb).toBe('tt12590266');
+    expect(vi.mocked(axios.get)).toHaveBeenCalledWith(
+      'https://anime-kitsu.strem.fun/meta/series/kitsu%3A50016.json',
+      { timeout: 4000 }
+    );
+  });
 });

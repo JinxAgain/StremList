@@ -1,6 +1,6 @@
 import { OpenListClient } from './client.js';
 import { AppConfig } from '../../config.js';
-import { MatchTarget, matchPlayableCandidate, FileItem } from '../matcher/file-matcher.js';
+import { MatchTarget, matchPlayableCandidate, FileItem, parseSeasonFromText } from '../matcher/file-matcher.js';
 
 export function normalizeDriveName(drive: string): string {
   const lower = drive.toLowerCase();
@@ -33,7 +33,11 @@ export function clearPlayUrlCache(): void {
 function buildCacheKey(infoHash: string, target: MatchTarget): string {
   const h = infoHash.toLowerCase().trim();
   const f = target.fileIdx !== undefined ? target.fileIdx : 'def';
-  const s = target.season !== undefined ? target.season : 'na';
+  const effectiveSeason =
+    target.season ??
+    (target.filename ? parseSeasonFromText(target.filename) : undefined) ??
+    (target.title ? parseSeasonFromText(target.title) : undefined);
+  const s = effectiveSeason !== undefined ? effectiveSeason : 'na';
   const e = target.episode !== undefined ? target.episode : 'na';
   return `${h}:${f}:${s}:${e}`;
 }
@@ -47,8 +51,12 @@ async function collectCandidatesRecursive(
 ): Promise<PlayableCandidateItem[]> {
   if (depth > maxDepth) return [];
   const listResult = await client.list(dirPath, refresh).catch(() => ({ content: [] }));
-  const items = listResult.content || [];
-  if (items.length === 0) return [];
+  const rawItems = listResult.content || [];
+  if (rawItems.length === 0) return [];
+
+  const items = [...rawItems].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+  );
 
   const candidates: PlayableCandidateItem[] = [];
   const subDirs: FileItem[] = [];

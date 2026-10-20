@@ -86,6 +86,31 @@ export class CinemetaClient {
       }
     }
 
+    // 3. Kitsu ID resolution (e.g. kitsu:50016)
+    if (idStr.startsWith('kitsu:')) {
+      const kitsuUrl = `https://anime-kitsu.strem.fun/meta/${cleanType}/${encodeURIComponent(idStr)}.json`;
+      try {
+        const resp = await axios.get(kitsuUrl, { timeout: 4000 });
+        if (resp.status === 200 && resp.data?.meta) {
+          const meta = resp.data.meta;
+          const name = String(meta.name || '').trim();
+          const resolvedImdb = meta.imdb_id ? String(meta.imdb_id).trim() : null;
+          let year: number | null = null;
+          const yearVal = meta.year || meta.releaseInfo;
+          if (yearVal) {
+            const m = String(yearVal).match(/(\d{4})/);
+            if (m) year = parseInt(m[1], 10);
+          }
+          if (name) {
+            return { title: name, year, resolvedImdb };
+          }
+        }
+      } catch (err) {
+        console.debug(`[Cinemeta] Kitsu lookup failed for ${idStr}:`, err);
+      }
+      return { title: '', year: null, resolvedImdb: null };
+    }
+
     return { title: '', year: null, resolvedImdb: null };
   }
 }
