@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../src/app.js';
 import { cacheManager } from '../../src/services/subtitles/cache/manager.js';
+import { CinemetaClient } from '../../src/services/subtitles/core/cinemeta.js';
 import { parseMediaId } from '../../src/routes/subtitles.js';
 
 describe('Subtitle & Harbor Routes', () => {
@@ -148,6 +149,24 @@ Hello Converted SRT World
     expect(Array.isArray(res.body.subtitles)).toBe(true);
     expect(res.body.subtitles.length).toBe(1);
     expect(res.body.subtitles[0].path).toContain('/subtitles/dl/subhd/101/1/edgerunners.srt');
+  });
+
+  it('routes subtitle request for kitsu:50016:4 without filename and infers season 2 from title', async () => {
+    vi.spyOn(CinemetaClient, 'resolveMediaInfo').mockResolvedValueOnce({
+      title: 'Cyberpunk: Edgerunners II',
+      year: 2026,
+      resolvedImdb: 'tt12590266'
+    });
+
+    cacheManager.setSearchResults('series:kitsu:50016:2:4:bilingual:all:8', [
+      { id: 'subhd_s2_ep4', lang: 'zh-CN', path: '/subtitles/dl/subhd/202/4/edgerunners_s02e04.srt' }
+    ]);
+
+    const res = await request(app).get('/subtitles/series/kitsu:50016:4.json');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.subtitles)).toBe(true);
+    expect(res.body.subtitles.length).toBe(1);
+    expect(res.body.subtitles[0].path).toContain('/subtitles/dl/subhd/202/4/edgerunners_s02e04.srt');
   });
 });
 

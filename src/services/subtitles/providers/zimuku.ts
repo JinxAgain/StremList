@@ -7,7 +7,8 @@ import {
   extractMetaFromFilename,
   extractFilenameFromResponse,
   parseSourceTagsFromText,
-  hasChineseSubtitle
+  hasChineseSubtitle,
+  extractSeasonAndBaseTitle
 } from './base.js';
 import { ZimukuBmpSolver } from './zimuku-solver.js';
 import { SubtitleCandidate, SubtitleTags, VideoQueryMeta } from '../types.js';
@@ -255,26 +256,42 @@ export class ZimukuProvider extends BaseProvider {
     }
 
     const isTtImdb = Boolean(meta.imdbId && meta.imdbId.startsWith('tt'));
+    const { baseTitle } = extractSeasonAndBaseTitle(cleanTitle);
+    const primaryTitle = baseTitle || cleanTitle;
 
     if (meta.mediaType === 'series' || meta.season !== undefined) {
       const s = meta.season || 1;
       const cnS = toCnSeason(s);
+      const sPad = String(s).padStart(2, '0');
+
+      if (isTtImdb) queries.push(meta.imdbId);
+
       if (s > 1) {
-        if (cleanTitle) queries.push(`${cleanTitle} ${cnS}`);
+        if (primaryTitle) {
+          queries.push(`${primaryTitle} ${cnS}`);
+          queries.push(`${primaryTitle} S${sPad}`);
+          queries.push(`${primaryTitle} Season ${s}`);
+          queries.push(primaryTitle);
+        }
+        if (cleanTitle && cleanTitle !== primaryTitle) {
+          queries.push(cleanTitle);
+        }
       } else {
-        if (isTtImdb) queries.push(meta.imdbId);
-        if (cleanTitle) {
-          queries.push(`${cleanTitle} S01`);
-          queries.push(`${cleanTitle} 第一季`);
-          queries.push(`${cleanTitle} Season 1`);
+        if (primaryTitle) {
+          queries.push(`${primaryTitle} S01`);
+          queries.push(`${primaryTitle} 第一季`);
+          queries.push(`${primaryTitle} Season 1`);
+          queries.push(primaryTitle);
+        }
+        if (cleanTitle && cleanTitle !== primaryTitle) {
           queries.push(cleanTitle);
         }
       }
     } else {
       if (isTtImdb) queries.push(meta.imdbId);
-      if (cleanTitle) {
-        if (meta.year) queries.push(`${cleanTitle} ${meta.year}`);
-        queries.push(cleanTitle);
+      if (primaryTitle) {
+        if (meta.year) queries.push(`${primaryTitle} ${meta.year}`);
+        queries.push(primaryTitle);
       }
     }
 

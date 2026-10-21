@@ -4,7 +4,7 @@ import { CinemetaClient } from '../services/subtitles/core/cinemeta.js';
 import { SubtitleCleaner } from '../services/subtitles/core/cleaner.js';
 import { SubtitleExtractor, SUBTITLE_EXTENSIONS } from '../services/subtitles/core/extractor.js';
 import { SubtitleScorer } from '../services/subtitles/core/scorer.js';
-import { extractMetaFromFilename, formatSubtitleInfo } from '../services/subtitles/providers/base.js';
+import { extractMetaFromFilename, formatSubtitleInfo, extractSeasonAndBaseTitle } from '../services/subtitles/providers/base.js';
 import { SubhdProvider } from '../services/subtitles/providers/subhd.js';
 import { ZimukuProvider } from '../services/subtitles/providers/zimuku.js';
 import { SubtitleCandidate, SubtitleItem, VideoQueryMeta } from '../services/subtitles/types.js';
@@ -128,6 +128,38 @@ export async function handleSubtitlesRequest(
     }
   }
 
+  // Pre-resolve media info if season is undefined for series (e.g. kitsu anime)
+  let mediaTitle = '';
+  let mediaYear: number | null = null;
+  let resolvedImdbId: string | null = null;
+
+  if (queryMeta.mediaType === 'series' && queryMeta.season === undefined) {
+    const resolved = await CinemetaClient.resolveMediaInfo(
+      queryMeta.mediaType,
+      queryMeta.imdbId
+    );
+    mediaTitle = resolved.title;
+    mediaYear = resolved.year;
+    resolvedImdbId = resolved.resolvedImdb;
+
+    if (mediaTitle) {
+      const { season: inferredSeason, baseTitle } = extractSeasonAndBaseTitle(mediaTitle);
+      if (inferredSeason !== undefined) {
+        queryMeta.season = inferredSeason;
+        queryMeta.baseTitle = baseTitle;
+      }
+    }
+    if (queryMeta.season === undefined && idStr.startsWith('kitsu:')) {
+      queryMeta.season = 1;
+    }
+  }
+
+  // Invalidate any stale zero-season cache entry for this series if season is now known
+  if (queryMeta.mediaType === 'series' && queryMeta.season !== undefined && queryMeta.season > 0) {
+    const staleZeroKey = `${queryMeta.mediaType}:${queryMeta.imdbId}:0:${queryMeta.episode ?? 0}:${langPref}:${sourcePref}:${maxResults}${showOriginal ? ':orig' : ''}${keepOriginalFormat ? ':rawfmt' : ''}`;
+    cacheManager.deleteSearchResult(staleZeroKey);
+  }
+
   const cacheKey = `${queryMeta.mediaType}:${queryMeta.imdbId}:${queryMeta.season ?? 0}:${queryMeta.episode ?? 0}:${langPref}:${sourcePref}:${maxResults}${showOriginal ? ':orig' : ''}${keepOriginalFormat ? ':rawfmt' : ''}`;
 
   // Check search cache
@@ -153,20 +185,36 @@ export async function handleSubtitlesRequest(
       return res.json({ subtitles: mapped });
     }
 
-    // Resolve media info via Cinemeta or TMDB
-    let { title, year, resolvedImdb } = await CinemetaClient.resolveMediaInfo(
-      queryMeta.mediaType,
-      queryMeta.imdbId
-    );
-
-    if (resolvedImdb && resolvedImdb.startsWith('tt') && !queryMeta.imdbId.startsWith('tt')) {
-      console.info(`[Subtitles] Resolved ${queryMeta.imdbId} -> ${resolvedImdb}`);
-      queryMeta.imdbId = resolvedImdb;
+    // Resolve media info via Cinemeta or TMDB (if not pre-resolved)
+    if (!mediaTitle && !resolvedImdbId) {
+      const resolved = await CinemetaClient.resolveMediaInfo(
+        queryMeta.mediaType,
+        queryMeta.imdbId
+      );
+      mediaTitle = resolved.title;
+      mediaYear = resolved.year;
+      resolvedImdbId = resolved.resolvedImdb;
     }
+
+    if (resolvedImdbId && resolvedImdbId.startsWith('tt') && !queryMeta.imdbId.startsWith('tt')) {
+      console.info(`[Subtitles] Resolved ${queryMeta.imdbId} -> ${resolvedImdbId}`);
+      queryMeta.imdbId = resolvedImdbId;
+    }
+
+    let title = mediaTitle;
+    let year = mediaYear;
 
     if (fnMeta) {
       if (!title && fnMeta.title) title = fnMeta.title;
       if (!year && fnMeta.year) year = fnMeta.year;
+    }
+
+    if (title && !queryMeta.baseTitle) {
+      const { season: inferredSeason, baseTitle } = extractSeasonAndBaseTitle(title);
+      if (queryMeta.season === undefined && inferredSeason !== undefined) {
+        queryMeta.season = inferredSeason;
+      }
+      queryMeta.baseTitle = baseTitle;
     }
 
     queryMeta.title = title;

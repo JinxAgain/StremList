@@ -8,6 +8,7 @@ export interface VideoQueryMeta {
   season?: number;
   episode?: number;
   title?: string;
+  baseTitle?: string;
   year?: number;
   filename?: string;
 }

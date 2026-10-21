@@ -87,6 +87,13 @@ export class CacheManager {
     this.scheduleSave();
   }
 
+  public deleteSearchResult(key: string): void {
+    if (this.searchCache.has(key)) {
+      this.searchCache.delete(key);
+      this.scheduleSave();
+    }
+  }
+
   public getSubtitlePath(filename: string): string {
     return path.join(this.subtitlesDir, filename);
   }

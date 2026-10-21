@@ -7,7 +7,8 @@ import {
   SOURCE_BADGE_MAP,
   parseSourceTagsFromText,
   hasChineseSubtitle,
-  extractSeasonsFromText
+  extractSeasonsFromText,
+  extractSeasonAndBaseTitle
 } from './base.js';
 import { SubtitleCandidate, SubtitleTags, VideoQueryMeta, SubhdSubjectItem } from '../types.js';
 
@@ -72,11 +73,16 @@ export class SubhdProvider extends BaseProvider {
 
     const isTtImdb = Boolean(meta.imdbId && meta.imdbId.startsWith('tt'));
 
+    const { baseTitle } = extractSeasonAndBaseTitle(cleanTitle);
+    const searchTitles = Array.from(new Set([cleanTitle, baseTitle, meta.baseTitle].filter(Boolean) as string[]));
+
     for (const domain of endpoints) {
       // Stage 1: /searchD/ subject lookup
       const subjectQueries: string[] = [];
       if (isTtImdb) subjectQueries.push(meta.imdbId);
-      if (cleanTitle) subjectQueries.push(cleanTitle);
+      for (const t of searchTitles) {
+        if (!subjectQueries.includes(t)) subjectQueries.push(t);
+      }
 
       for (const q of subjectQueries) {
         const isImdb = q.startsWith('tt');
@@ -223,6 +229,8 @@ export class SubhdProvider extends BaseProvider {
     }
 
     const isTtImdb = Boolean(meta.imdbId && meta.imdbId.startsWith('tt'));
+    const { baseTitle } = extractSeasonAndBaseTitle(cleanTitle);
+    const titlesToQuery = Array.from(new Set([cleanTitle, baseTitle, meta.baseTitle].filter(Boolean) as string[]));
 
     if (meta.mediaType === 'series' || meta.season !== undefined) {
       const s = String(meta.season ?? 1).padStart(2, '0');
@@ -233,16 +241,16 @@ export class SubhdProvider extends BaseProvider {
         queries.push(`${meta.imdbId} S${s}`);
         queries.push(meta.imdbId);
       }
-      if (cleanTitle) {
-        if (ep) queries.push(`${cleanTitle} S${s}E${ep}`);
-        queries.push(`${cleanTitle} S${s}`);
-        queries.push(cleanTitle);
+      for (const t of titlesToQuery) {
+        if (ep) queries.push(`${t} S${s}E${ep}`);
+        queries.push(`${t} S${s}`);
+        queries.push(t);
       }
     } else {
       if (isTtImdb) queries.push(meta.imdbId);
-      if (cleanTitle) {
-        if (meta.year) queries.push(`${cleanTitle} ${meta.year}`);
-        queries.push(cleanTitle);
+      for (const t of titlesToQuery) {
+        if (meta.year) queries.push(`${t} ${meta.year}`);
+        queries.push(t);
       }
     }
 

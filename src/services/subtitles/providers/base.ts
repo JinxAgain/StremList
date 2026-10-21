@@ -68,6 +68,18 @@ export function toCnSeason(season?: number): string {
   return `第${cnNum}季`;
 }
 
+export const ROMAN_SEASON_REV: Record<string, number> = {
+  II: 2,
+  III: 3,
+  IV: 4,
+  V: 5,
+  VI: 6,
+  VII: 7,
+  VIII: 8,
+  IX: 9,
+  X: 10
+};
+
 export function extractSeasonsFromText(text: string): Set<number> {
   const seasons = new Set<number>();
   if (!text) return seasons;
@@ -93,6 +105,17 @@ export function extractSeasonsFromText(text: string): Set<number> {
     if (val) seasons.add(val);
   }
 
+  // Ordinal seasons: 1st Season, 2nd Season, 3rd Season, etc.
+  for (const m of text.matchAll(/\b0*(\d{1,2})(?:st|nd|rd|th)\s+season\b/gi)) {
+    seasons.add(parseInt(m[1], 10));
+  }
+
+  // Roman numerals: II, III, IV, V, VI, VII, VIII, IX, X
+  for (const m of text.matchAll(/\b(?:season|part|s|vol)?\s*(X|IX|VIII|VII|VI|V|IV|III|II)\b/g)) {
+    const val = ROMAN_SEASON_REV[m[1]];
+    if (val) seasons.add(val);
+  }
+
   // Season ranges: S01-S03, S1-S4
   for (const m of text.matchAll(/\b[sS](\d{1,2})\s*[-~至到]\s*[sS]?(\d{1,2})\b/g)) {
     const sStart = parseInt(m[1], 10);
@@ -112,6 +135,83 @@ export function extractSeasonsFromText(text: string): Set<number> {
   }
 
   return seasons;
+}
+
+export function extractSeasonAndBaseTitle(
+  rawTitle: string
+): { season?: number; baseTitle: string } {
+  if (!rawTitle) return { baseTitle: '' };
+  let title = rawTitle.trim();
+  let season: number | undefined;
+
+  // 1. Chinese season: 第二季, 第2季, 2季
+  const cnMatch = title.match(/[\s:._\-]*(?:第\s*([一二三四五六七八九十0-9]+)\s*季|([0-9]+)\s*季)\s*$/i);
+  if (cnMatch) {
+    const sStr = cnMatch[1] || cnMatch[2];
+    const s = CN_SEASON_REV[sStr] || parseInt(sStr, 10);
+    if (s > 0) {
+      season = s;
+      title = title.slice(0, cnMatch.index).trim();
+    }
+  }
+
+  // 2. English Season / S: Season 2, S02, S2
+  if (season === undefined) {
+    const sMatch = title.match(/[\s:._\-]+(?:season\s*0*(\d{1,2})|[sS]0*(\d{1,2}))\s*$/i);
+    if (sMatch) {
+      const s = parseInt(sMatch[1] || sMatch[2], 10);
+      if (s > 0) {
+        season = s;
+        title = title.slice(0, sMatch.index).trim();
+      }
+    }
+  }
+
+  // 3. Ordinal season: 2nd Season, 3rd Season
+  if (season === undefined) {
+    const ordMatch = title.match(/[\s:._\-]+0*(\d{1,2})(?:st|nd|rd|th)\s+season\s*$/i);
+    if (ordMatch) {
+      const s = parseInt(ordMatch[1], 10);
+      if (s > 0) {
+        season = s;
+        title = title.slice(0, ordMatch.index).trim();
+      }
+    }
+  }
+
+  // 4. Part N / Part Roman at end: Part 2, Part II
+  if (season === undefined) {
+    const partMatch = title.match(/[\s:._\-]+part\s*0*(\d{1,2}|X|IX|VIII|VII|VI|V|IV|III|II)\s*$/i);
+    if (partMatch) {
+      const val = partMatch[1].toUpperCase();
+      const s = ROMAN_SEASON_REV[val] || parseInt(val, 10);
+      if (s > 0) {
+        season = s;
+        title = title.slice(0, partMatch.index).trim();
+      }
+    }
+  }
+
+  // 5. Roman numerals at the end of title: II, III, IV, etc.
+  if (season === undefined) {
+    const romanMatch = title.match(/[\s:._\-]+(X|IX|VIII|VII|VI|V|IV|III|II)\s*$/);
+    if (romanMatch) {
+      season = ROMAN_SEASON_REV[romanMatch[1]];
+      title = title.slice(0, romanMatch.index).trim();
+    }
+  }
+
+  // 6. Standalone single digit at end of title: e.g. Cyberpunk: Edgerunners 2
+  if (season === undefined) {
+    const digitMatch = title.match(/[\s:._\-]+([2-9])\s*$/);
+    if (digitMatch) {
+      season = parseInt(digitMatch[1], 10);
+      title = title.slice(0, digitMatch.index).trim();
+    }
+  }
+
+  title = title.replace(/[:._\-]+$/, '').trim();
+  return { season, baseTitle: title || rawTitle.trim() };
 }
 
 export function isEpisodeMatch(
@@ -192,7 +292,10 @@ export function isEpisodeMatch(
   }
 
   if (isPack && season === undefined) {
-    return [true, true];
+    const foundSeasons = extractSeasonsFromText(title);
+    if (foundSeasons.size === 0 || foundSeasons.has(1)) {
+      return [true, true];
+    }
   }
 
   return [false, false];

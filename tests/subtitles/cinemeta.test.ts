@@ -50,4 +50,38 @@ describe('CinemetaClient', () => {
       { timeout: 4000 }
     );
   });
+
+  it('falls back to official Kitsu API and Cinemeta search when anime-kitsu fails', async () => {
+    // 1. anime-kitsu fails (e.g. 403 Forbidden)
+    vi.mocked(axios.get).mockRejectedValueOnce(new Error('Request failed with status code 403'));
+
+    // 2. official Kitsu API succeeds
+    vi.mocked(axios.get).mockResolvedValueOnce({
+      status: 200,
+      data: {
+        data: {
+          attributes: {
+            canonicalTitle: 'Cyberpunk: Edgerunners II',
+            startDate: '2026-10-20'
+          }
+        }
+      }
+    } as any);
+
+    // 3. Cinemeta catalog search succeeds for baseTitle
+    vi.mocked(axios.get).mockResolvedValueOnce({
+      status: 200,
+      data: {
+        metas: [
+          { id: 'tt12590266', name: 'Cyberpunk: Edgerunners' }
+        ]
+      }
+    } as any);
+
+    const res = await CinemetaClient.resolveMediaInfo('series', 'kitsu:50016');
+    expect(res.title).toBe('Cyberpunk: Edgerunners II');
+    expect(res.year).toBe(2026);
+    expect(res.resolvedImdb).toBe('tt12590266');
+  });
 });
+
