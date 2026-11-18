@@ -1,16 +1,38 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import fs from 'fs';
 import request from 'supertest';
 import { createApp } from '../../src/app.js';
 import { cacheManager } from '../../src/services/subtitles/cache/manager.js';
 import { CinemetaClient } from '../../src/services/subtitles/core/cinemeta.js';
+import { AssrtProvider } from '../../src/services/subtitles/providers/assrt.js';
+import { SubhdProvider } from '../../src/services/subtitles/providers/subhd.js';
+import { ZimukuProvider } from '../../src/services/subtitles/providers/zimuku.js';
 import { parseMediaId } from '../../src/routes/subtitles.js';
 
 describe('Subtitle & Harbor Routes', () => {
   const app = createApp();
+  const savedEnv: Record<string, string | undefined> = {};
 
   beforeEach(() => {
-    delete process.env.SUBTITLE_SHOW_ORIGINAL;
-    delete process.env.SUBTITLE_KEEP_ORIGINAL_FORMAT;
+    for (const k of [
+      'SUBTITLE_SHOW_ORIGINAL',
+      'SUBTITLE_KEEP_ORIGINAL_FORMAT',
+      'ASSRT_TOKEN',
+      'SUBTITLE_SOURCE',
+      'SUBTITLE_LANG',
+      'SUBTITLE_MAX_RESULTS'
+    ]) {
+      savedEnv[k] = process.env[k];
+      delete process.env[k];
+    }
+  });
+
+  afterEach(() => {
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    vi.restoreAllMocks();
   });
 
   it('includes subtitles in manifest', async () => {
@@ -167,6 +189,238 @@ Hello Converted SRT World
     expect(Array.isArray(res.body.subtitles)).toBe(true);
     expect(res.body.subtitles.length).toBe(1);
     expect(res.body.subtitles[0].path).toContain('/subtitles/dl/subhd/202/4/edgerunners_s02e04.srt');
+  });
+
+  it('downloads and serves ASSRT subtitle via /subtitles/dl/assrt/:id/:ep route', async () => {
+    const cacheFile = cacheManager.getSubtitlePath('assrt_654321_0.srt');
+    if (fs.existsSync(cacheFile)) fs.unlinkSync(cacheFile);
+
+    const sampleSrt = `1\n00:00:05,000 --> 00:00:08,000\nASSRT Live Route Subtitle\n`;
+    const spy = vi.spyOn(AssrtProvider.prototype, 'download').mockResolvedValueOnce({
+      buffer: Buffer.from(sampleSrt, 'utf-8'),
+      filename: 'The.Odyssey.2026.chs&eng.srt'
+    });
+
+    try {
+      const res = await request(app).get('/subtitles/dl/assrt/654321/0/subtitle.srt');
+      expect(res.status).toBe(200);
+      expect(res.text).toContain('ASSRT Live Route Subtitle');
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+      if (fs.existsSync(cacheFile)) fs.unlinkSync(cacheFile);
+    }
+  });
+
+  it('POST /api/assrt/test checks ASSRT token quota', async () => {
+    const spy = vi.spyOn(AssrtProvider, 'checkQuota').mockResolvedValueOnce({
+      success: true,
+      quota: 19,
+      status: 0,
+      message: 'OK'
+    });
+
+    const res = await request(app)
+      .post('/api/assrt/test')
+      .send({ token: 'testtoken1234567890123456789012' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      success: true,
+      quota: 19,
+      status: 0,
+      message: 'OK'
+    });
+    expect(spy).toHaveBeenCalledWith('testtoken1234567890123456789012', undefined);
+    spy.mockRestore();
+  });
+
+  it('dispatches no_subhd subtitleSource to Zimuku and ASSRT without invoking SubHD', async () => {
+    const customConfig = {
+      subtitleSource: 'no_subhd',
+      assrtToken: 'testtoken1234567890123456789012'
+    };
+    const b64 = Buffer.from(JSON.stringify(customConfig)).toString('base64url');
+    const cacheKey = 'movie:tt33764258:0:0:bilingual:no_subhd:8:assrt_45f082f6';
+    cacheManager.deleteSearchResult(cacheKey);
+
+    vi.spyOn(CinemetaClient, 'resolveMediaInfo').mockResolvedValueOnce({
+      title: 'The Odyssey',
+      year: 2026,
+      resolvedImdb: 'tt33764258'
+    });
+
+    const subhdSpy = vi.spyOn(SubhdProvider.prototype, 'search').mockResolvedValue([]);
+    const zimukuSpy = vi.spyOn(ZimukuProvider.prototype, 'search').mockResolvedValue([]);
+    const assrtSpy = vi.spyOn(AssrtProvider.prototype, 'search').mockResolvedValueOnce([
+      {
+        id: '654322',
+        provider: 'assrt',
+        title: 'The.Odyssey.2026.1080p.BluRay',
+        pageUrl: 'https://assrt.net/xml/sub/654/654322.xml',
+        tags: {
+          provider: 'assrt',
+          lang: ['chs'],
+          bilingual: true,
+          fmt: ['srt'],
+          source: ['official'],
+          collection: false,
+          imdbMatched: true
+        },
+        rate: 5,
+        downloadsCount: 50,
+        score: 0
+      }
+    ]);
+
+    try {
+      const res = await request(app).get(`/${b64}/subtitles/movie/tt33764258.json`);
+      expect(res.status).toBe(200);
+      expect(subhdSpy).not.toHaveBeenCalled();
+      expect(zimukuSpy).toHaveBeenCalledTimes(1);
+      expect(assrtSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'The Odyssey', year: 2026 }), 'testtoken1234567890123456789012');
+      expect(res.body.subtitles).toHaveLength(1);
+      expect(res.body.subtitles[0].label).toContain('[ASSRT]');
+      expect(res.body.subtitles[0].path).toContain(`/${b64}/subtitles/dl/assrt/654322/0/`);
+    } finally {
+      cacheManager.deleteSearchResult(cacheKey);
+    }
+  });
+
+  it('propagates /:config assrtToken and season across search and download without .env ASSRT_TOKEN', async () => {
+    const customConfig = {
+      subtitleSource: 'assrt',
+      assrtToken: 'urlconfigtoken123456789012345678'
+    };
+    const b64 = Buffer.from(JSON.stringify(customConfig)).toString('base64url');
+    const cacheFile = cacheManager.getSubtitlePath('assrt_707070_s2_4.srt');
+    if (fs.existsSync(cacheFile)) fs.unlinkSync(cacheFile);
+
+    vi.spyOn(CinemetaClient, 'resolveMediaInfo').mockResolvedValueOnce({
+      title: 'Sample Show',
+      year: 2023,
+      resolvedImdb: 'tt9991111'
+    });
+    const subhdSpy = vi.spyOn(SubhdProvider.prototype, 'search').mockResolvedValue([]);
+    const zimukuSpy = vi.spyOn(ZimukuProvider.prototype, 'search').mockResolvedValue([]);
+    vi.spyOn(AssrtProvider.prototype, 'search').mockResolvedValueOnce([
+      {
+        id: '707070',
+        provider: 'assrt',
+        title: 'Sample.Show.S02E04.1080p',
+        pageUrl: 'https://assrt.net/xml/sub/707/707070.xml',
+        tags: {
+          provider: 'assrt',
+          lang: ['chs'],
+          bilingual: true,
+          fmt: ['srt'],
+          source: [],
+          collection: false,
+          imdbMatched: true,
+          seasonMatched: true,
+          episodeMatched: true
+        },
+        rate: 5,
+        downloadsCount: 10,
+        score: 0
+      }
+    ]);
+    const dlSpy = vi.spyOn(AssrtProvider.prototype, 'download').mockResolvedValueOnce({
+      buffer: Buffer.from('1\n00:00:01,000 --> 00:00:03,000\nURL Config ASSRT\n', 'utf-8'),
+      filename: 'Sample.Show.S02E04.srt'
+    });
+
+    try {
+      const searchRes = await request(app).get(`/${b64}/subtitles/series/tt9991111:2:4.json`);
+      expect(searchRes.status).toBe(200);
+      expect(subhdSpy).not.toHaveBeenCalled();
+      expect(zimukuSpy).not.toHaveBeenCalled();
+      expect(searchRes.body.subtitles).toHaveLength(1);
+      const dlPath = searchRes.body.subtitles[0].path;
+      expect(dlPath).toContain(`/${b64}/subtitles/dl/assrt/707070/4/`);
+      expect(dlPath).toContain('&s=2');
+
+      const dlRes = await request(app).get(dlPath);
+      expect(dlRes.status).toBe(200);
+      expect(dlRes.text).toContain('URL Config ASSRT');
+      expect(dlSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ id: '707070', provider: 'assrt' }),
+        expect.objectContaining({
+          episode: 4,
+          season: 2,
+          token: 'urlconfigtoken123456789012345678'
+        })
+      );
+    } finally {
+      if (fs.existsSync(cacheFile)) fs.unlinkSync(cacheFile);
+      for (const k of Array.from((cacheManager as any).searchCache.keys()) as string[]) {
+        if (k.includes('tt9991111')) cacheManager.deleteSearchResult(k);
+      }
+    }
+  });
+
+  it('does not infer TV season from movie sequel titles like Toy Story 2', async () => {
+    vi.spyOn(CinemetaClient, 'resolveMediaInfo').mockResolvedValueOnce({
+      title: 'Toy Story 2',
+      year: 1999,
+      resolvedImdb: 'tt0120363'
+    });
+    vi.spyOn(SubhdProvider.prototype, 'search').mockResolvedValue([]);
+    vi.spyOn(ZimukuProvider.prototype, 'search').mockResolvedValue([]);
+    const assrtSpy = vi.spyOn(AssrtProvider.prototype, 'search').mockResolvedValueOnce([]);
+
+    const b64 = Buffer.from(JSON.stringify({ subtitleSource: 'assrt', assrtToken: 'tok1234567890123456789012345678' })).toString('base64url');
+    const res = await request(app).get(`/${b64}/subtitles/movie/tt0120363.json`);
+    expect(res.status).toBe(200);
+    expect(assrtSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mediaType: 'movie',
+        title: 'Toy Story 2',
+        baseTitle: 'Toy Story 2',
+        season: undefined
+      }),
+      'tok1234567890123456789012345678'
+    );
+  });
+
+  it('isolates search cache under sourcePref=all between token-less and ASSRT-configured requests', async () => {
+    cacheManager.setSearchResults('movie:tt5555555:0:0:bilingual:all:8', [
+      { id: 'zimuku_1', url: '', lang: 'chi', label: 'Zimuku Only', subtitleFileName: 'z.srt', movieReleaseName: 'z', SubFormat: 'srt', path: '/subtitles/dl/zimuku/1/0/z.srt' }
+    ]);
+
+    vi.spyOn(CinemetaClient, 'resolveMediaInfo').mockResolvedValueOnce({
+      title: 'Unique Cache Test Movie',
+      year: 2025,
+      resolvedImdb: 'tt5555555'
+    });
+    vi.spyOn(SubhdProvider.prototype, 'search').mockResolvedValue([]);
+    vi.spyOn(ZimukuProvider.prototype, 'search').mockResolvedValue([]);
+    const assrtSpy = vi.spyOn(AssrtProvider.prototype, 'search').mockResolvedValueOnce([
+      {
+        id: '808080',
+        provider: 'assrt',
+        title: 'Unique.Cache.Test.Movie.2025.1080p',
+        pageUrl: 'https://assrt.net/xml/sub/808/808080.xml',
+        tags: { provider: 'assrt', lang: ['chs'], bilingual: true, fmt: ['srt'], source: [], collection: false, imdbMatched: true },
+        rate: 5,
+        downloadsCount: 10,
+        score: 0
+      }
+    ]);
+
+    try {
+      const noTokenRes = await request(app).get('/subtitles/movie/tt5555555.json');
+      expect(noTokenRes.body.subtitles[0].id).toBe('zimuku_1');
+
+      const withTokenB64 = Buffer.from(JSON.stringify({ assrtToken: 'isolatedtoken123456789012345678' })).toString('base64url');
+      const withTokenRes = await request(app).get(`/${withTokenB64}/subtitles/movie/tt5555555.json`);
+      expect(assrtSpy).toHaveBeenCalledTimes(1);
+      expect(withTokenRes.body.subtitles[0].id).toBe('assrt_808080_0');
+    } finally {
+      for (const k of Array.from((cacheManager as any).searchCache.keys()) as string[]) {
+        if (k.includes('tt5555555')) cacheManager.deleteSearchResult(k);
+      }
+    }
   });
 });
 

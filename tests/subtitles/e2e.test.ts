@@ -12,9 +12,20 @@ describe('End-to-End Subtitle Flow', () => {
   const testSubFile = 'subhd_test_e2e_0.srt';
   const testSubContent = '1\n00:00:01,000 --> 00:00:03,000\nHello World from StremList E2E\n';
 
+  const savedEnv: Record<string, string | undefined> = {};
+
   beforeAll(() => {
-    delete process.env.SUBTITLE_SHOW_ORIGINAL;
-    delete process.env.SUBTITLE_KEEP_ORIGINAL_FORMAT;
+    for (const k of [
+      'SUBTITLE_SHOW_ORIGINAL',
+      'SUBTITLE_KEEP_ORIGINAL_FORMAT',
+      'ASSRT_TOKEN',
+      'SUBTITLE_SOURCE',
+      'SUBTITLE_LANG',
+      'SUBTITLE_MAX_RESULTS'
+    ]) {
+      savedEnv[k] = process.env[k];
+      delete process.env[k];
+    }
     cacheManager.saveSubtitle(testSubFile, testSubContent);
     // Pre-populate search caches to test routing and response serialization deterministically
     cacheManager.setSearchResults('movie:tt1234567:0:0:bilingual:all:8', [
@@ -40,6 +51,10 @@ describe('End-to-End Subtitle Flow', () => {
   });
 
   afterAll(() => {
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
     const subPath = path.join(testCacheDir, 'subtitles', testSubFile);
     if (fs.existsSync(subPath)) {
       try {

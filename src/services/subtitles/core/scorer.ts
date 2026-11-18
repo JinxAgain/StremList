@@ -1,6 +1,7 @@
 import { SubtitleCandidate, VideoQueryMeta } from '../types.js';
 import { extractSeasonsFromText } from '../providers/base.js';
 import { SubhdProvider } from '../providers/subhd.js';
+import { AssrtProvider } from '../providers/assrt.js';
 
 export class SubtitleScorer {
   public static rankCandidates(
@@ -50,6 +51,9 @@ export class SubtitleScorer {
     const isTv = query.mediaType === 'series' || query.season !== undefined;
 
     if (candidate.provider === 'subhd' && SubhdProvider.isRateLimited()) {
+      score -= 2000.0;
+    }
+    if (candidate.provider === 'assrt' && AssrtProvider.isRateLimited()) {
       score -= 2000.0;
     }
 

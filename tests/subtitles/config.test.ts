@@ -25,18 +25,20 @@ describe('AppConfig Subtitle Settings', () => {
     const customConfig = {
       subtitleEnabled: false,
       subtitleLang: 'chs' as const,
-      subtitleSource: 'zimuku' as const,
+      subtitleSource: 'no_subhd' as const,
       subtitleMaxResults: 5,
       subtitleShowOriginal: true,
-      subtitleKeepOriginalFormat: true
+      subtitleKeepOriginalFormat: true,
+      assrtToken: 'abc123token'
     };
     const b64 = Buffer.from(JSON.stringify(customConfig)).toString('base64url');
     const cfg = loadConfig(b64);
     expect(cfg.subtitleEnabled).toBe(false);
     expect(cfg.subtitleLang).toBe('chs');
-    expect(cfg.subtitleSource).toBe('zimuku');
+    expect(cfg.subtitleSource).toBe('no_subhd');
     expect(cfg.subtitleMaxResults).toBe(5);
     expect(cfg.subtitleShowOriginal).toBe(true);
     expect(cfg.subtitleKeepOriginalFormat).toBe(true);
+    expect(cfg.assrtToken).toBe('abc123token');
   });
 });

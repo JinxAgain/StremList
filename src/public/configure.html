@@ -279,7 +279,7 @@
       <div class="form-group" style="display: flex; align-items: center; justify-content: space-between; padding: 12px; background: rgba(15, 23, 42, 0.4); border-radius: 10px; border: 1px solid var(--border);">
         <div>
           <label for="subtitleEnabled" style="margin-bottom: 0; cursor: pointer;">启用中文字幕插件 (Enable Subtitles)</label>
-          <div class="help-text">自动聚合 SubHD 与 字幕库 中文字幕</div>
+          <div class="help-text">自动聚合 SubHD、字幕库 与 射手网(ASSRT) 中文字幕</div>
         </div>
         <input type="checkbox" id="subtitleEnabled" checked style="width: 20px; height: 20px; cursor: pointer; accent-color: var(--primary);">
       </div>
@@ -312,10 +312,25 @@
       <div class="form-group">
         <label for="subtitleSource">字幕来源 (Subtitle Providers)</label>
         <select id="subtitleSource">
-          <option id="subtitleSource_all" value="all">聚合 (SubHD + 字幕库)</option>
-          <option id="subtitleSource_subhd" value="subhd">仅 SubHD</option>
+          <option id="subtitleSource_all" value="all">聚合全部 (SubHD + 字幕库 + ASSRT)</option>
+          <option id="subtitleSource_no_subhd" value="no_subhd">字幕库 + ASSRT (免 Cloudflare 验证推荐)</option>
           <option id="subtitleSource_zimuku" value="zimuku">仅 字幕库 (Zimuku)</option>
+          <option id="subtitleSource_assrt" value="assrt">仅 射手网 (ASSRT API)</option>
+          <option id="subtitleSource_subhd" value="subhd">仅 SubHD</option>
         </select>
+      </div>
+
+      <div class="form-group">
+        <label for="assrtToken">ASSRT API Token (射手网伪站官方接口，可选)</label>
+        <input type="password" id="assrtToken" placeholder="输入 32 位 ASSRT API Token (留空则不启用 ASSRT)">
+        <div class="btn-row">
+          <button type="button" class="btn-sm" id="testAssrtBtn">🔍 测试配额</button>
+          <a href="https://secure.assrt.net/user/cp.xml" target="_blank" rel="noopener noreferrer" class="btn-sm" style="text-decoration: none; display: inline-flex; align-items: center;">🔑 获取 Token</a>
+        </div>
+        <div class="help-text">
+          免费配额 20 次/分钟，无 Cloudflare 验证码。字幕服务由 <a href="https://assrt.net" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: underline;">assrt.net</a> 提供
+        </div>
+        <div class="status-badge" id="assrtStatusBadge"></div>
       </div>
 
       <div class="form-group">
@@ -330,7 +345,7 @@
       <div class="form-group">
         <label for="subtitleProxy">字幕网络代理 (HTTP/HTTPS Proxy, 可选)</label>
         <input type="text" id="subtitleProxy" placeholder="例如: http://127.0.0.1:7890 (留空为直连)">
-        <div class="help-text">若国内访问 SubHD / 字幕库不稳定可填写本地代理</div>
+        <div class="help-text">若国内访问 SubHD / 字幕库 / ASSRT 不稳定可填写本地代理</div>
       </div>
 
       <div class="actions">
@@ -363,7 +378,8 @@
         subtitleLang: document.getElementById('subtitleLang') ? document.getElementById('subtitleLang').value : 'bilingual',
         subtitleSource: document.getElementById('subtitleSource') ? document.getElementById('subtitleSource').value : 'all',
         subtitleMaxResults: document.getElementById('subtitleMaxResults') ? parseInt(document.getElementById('subtitleMaxResults').value, 10) : 8,
-        subtitleProxy: document.getElementById('subtitleProxy') ? document.getElementById('subtitleProxy').value.trim() : ''
+        subtitleProxy: document.getElementById('subtitleProxy') ? document.getElementById('subtitleProxy').value.trim() : '',
+        assrtToken: document.getElementById('assrtToken') ? document.getElementById('assrtToken').value.trim() : ''
       };
 
       try {
@@ -528,6 +544,37 @@
           alert('✅ 插件链接已复制！在 Stremio 中粘贴安装一次即可永久生效。');
         } catch (err) {
           alert('插件安装链接：\n' + url);
+        }
+      });
+    }
+
+    const testAssrtBtn = document.getElementById('testAssrtBtn');
+    if (testAssrtBtn) {
+      testAssrtBtn.addEventListener('click', async () => {
+        const token = document.getElementById('assrtToken').value.trim();
+        const proxy = document.getElementById('subtitleProxy').value.trim();
+        const badge = document.getElementById('assrtStatusBadge');
+        badge.className = 'status-badge status-warning';
+        badge.textContent = '⏳ 正在检测 ASSRT Token 配额...';
+        badge.style.display = 'block';
+
+        try {
+          const res = await fetch('/api/assrt/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token, proxy })
+          });
+          const data = await res.json();
+          if (data.success) {
+            badge.className = 'status-badge status-success';
+            badge.textContent = `✅ ASSRT Token 有效！当前剩余配额: ${data.quota} 次/分钟`;
+          } else {
+            badge.className = 'status-badge status-error';
+            badge.textContent = `❌ 测试失败: ${data.message || '请检查 Token 是否正确'}`;
+          }
+        } catch (err) {
+          badge.className = 'status-badge status-error';
+          badge.textContent = `❌ 请求失败: ${err.message}`;
         }
       });
     }

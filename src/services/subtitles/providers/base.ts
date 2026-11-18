@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import { SubtitleCandidate, VideoQueryMeta, FormatSubtitleOptions } from '../types.js';
+import { SubtitleCandidate, VideoQueryMeta, FormatSubtitleOptions, DownloadOptions } from '../types.js';
 
 export const SOURCE_BADGE_MAP: Record<string, 'official' | 'ai' | 'machine' | 'reprint' | 'original'> = {
   官方字幕: 'official',
@@ -448,7 +448,8 @@ export function formatSubtitleInfo(
     sourceBadge = '[机翻]';
   }
 
-  const provTag = cand.provider.toLowerCase() === 'subhd' ? 'SubHD' : 'Zimuku';
+  const pLower = cand.provider.toLowerCase();
+  const provTag = pLower === 'subhd' ? 'SubHD' : pLower === 'assrt' ? 'ASSRT' : 'Zimuku';
 
   let targetFormat = 'srt';
   if (options.keepOriginalFormat) {
@@ -589,5 +590,8 @@ export abstract class BaseProvider {
   }
 
   public abstract search(meta: VideoQueryMeta): Promise<SubtitleCandidate[]>;
-  public abstract download(candidate: SubtitleCandidate): Promise<{ buffer: Buffer; filename: string } | null>;
+  public abstract download(
+    candidate: SubtitleCandidate,
+    options?: DownloadOptions
+  ): Promise<{ buffer: Buffer; filename: string } | null>;
 }

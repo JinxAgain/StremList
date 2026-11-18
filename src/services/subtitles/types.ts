@@ -39,7 +39,7 @@ export interface SubhdSubjectItem {
 
 export interface SubtitleCandidate {
   id: string;
-  provider: 'subhd' | 'zimuku';
+  provider: 'subhd' | 'zimuku' | 'assrt';
   title: string;
   pageUrl: string;
   tags: SubtitleTags;
@@ -66,14 +66,59 @@ export interface DownloadResult {
   filename: string;
 }
 
+export interface DownloadOptions {
+  episode?: number;
+  season?: number;
+  token?: string;
+  preferBilingual?: boolean;
+  preferTraditional?: boolean;
+  preferAss?: boolean;
+}
+
+export interface AssrtFileListItem {
+  url?: string;
+  f: string;
+  s?: string;
+}
+
+export interface AssrtSubItem {
+  id: number;
+  native_name?: string;
+  videoname?: string;
+  filename?: string;
+  title?: string;
+  revision?: number;
+  upload_time?: string;
+  subtype?: string;
+  vote_score?: number;
+  release_site?: string;
+  vote_machine_translate?: number | boolean;
+  down_count?: number;
+  view_count?: number;
+  size?: number;
+  url?: string;
+  filelist?: AssrtFileListItem[] | Record<string, AssrtFileListItem>;
+  lang?: {
+    desc?: string;
+    langlist?: Record<string, boolean>;
+  };
+  producer?: {
+    producer?: string;
+    verifier?: string;
+    source?: string;
+    uploader?: string;
+  };
+}
+
 export interface SubtitleConfig {
   enabled: boolean;
   lang: 'bilingual' | 'chs' | 'cht';
-  source: 'all' | 'subhd' | 'zimuku';
+  source: 'all' | 'no_subhd' | 'subhd' | 'zimuku' | 'assrt';
   maxResults: number;
   proxy?: string;
   showOriginal?: boolean;
   keepOriginalFormat?: boolean;
+  assrtToken?: string;
 }
 
 export interface FormatSubtitleOptions {

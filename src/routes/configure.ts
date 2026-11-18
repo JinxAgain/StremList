@@ -5,6 +5,7 @@ import fs from 'fs';
 import axios from 'axios';
 import { loadConfig, saveConfigToEnv } from '../config.js';
 import { OpenListClient } from '../services/openlist/client.js';
+import { AssrtProvider } from '../services/subtitles/providers/assrt.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -66,6 +67,10 @@ export function handleConfigure(_req: Request, res: Response) {
     if (config.subtitleProxy) {
       html = html.replace('id="subtitleProxy"', `id="subtitleProxy" value="${config.subtitleProxy}"`);
     }
+    if (config.assrtToken) {
+      const safeToken = config.assrtToken.replace(/["'&<>]/g, '');
+      html = html.replace('id="assrtToken"', () => `id="assrtToken" value="${safeToken}"`);
+    }
 
     return res.send(html);
   } catch {
@@ -87,7 +92,8 @@ export async function handleSaveConfig(req: Request, res: Response) {
       subtitleMaxResults,
       subtitleProxy,
       subtitleShowOriginal,
-      subtitleKeepOriginalFormat
+      subtitleKeepOriginalFormat,
+      assrtToken
     } = req.body || {};
 
     const updates: Record<string, string> = {};
@@ -104,6 +110,7 @@ export async function handleSaveConfig(req: Request, res: Response) {
     if (subtitleProxy !== undefined) updates['SUBTITLE_PROXY'] = String(subtitleProxy).trim();
     if (subtitleShowOriginal !== undefined) updates['SUBTITLE_SHOW_ORIGINAL'] = String(subtitleShowOriginal);
     if (subtitleKeepOriginalFormat !== undefined) updates['SUBTITLE_KEEP_ORIGINAL_FORMAT'] = String(subtitleKeepOriginalFormat);
+    if (assrtToken !== undefined && assrtToken !== null) updates['ASSRT_TOKEN'] = String(assrtToken).trim();
 
     saveConfigToEnv(updates);
     return res.json({ success: true, message: 'Configuration saved successfully to .env' });
@@ -219,5 +226,17 @@ export async function handleOpenListTest(req: Request, res: Response) {
     const code = error.response?.status;
     const msg = error.response?.data?.message || error.message;
     return res.json({ success: false, code, message: msg });
+  }
+}
+
+export async function handleAssrtTest(req: Request, res: Response) {
+  try {
+    const config = loadConfig();
+    const token = String(req.body?.token ?? config.assrtToken ?? '').trim();
+    const proxy = String(req.body?.proxy ?? config.subtitleProxy ?? '').trim() || undefined;
+    const result = await AssrtProvider.checkQuota(token, proxy);
+    return res.json(result);
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
   }
 }

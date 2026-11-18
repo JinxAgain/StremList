@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { Request, Response, Router } from 'express';
 import { cacheManager } from '../services/subtitles/cache/manager.js';
 import { CinemetaClient } from '../services/subtitles/core/cinemeta.js';
@@ -7,11 +8,13 @@ import { SubtitleScorer } from '../services/subtitles/core/scorer.js';
 import { extractMetaFromFilename, formatSubtitleInfo, extractSeasonAndBaseTitle } from '../services/subtitles/providers/base.js';
 import { SubhdProvider } from '../services/subtitles/providers/subhd.js';
 import { ZimukuProvider } from '../services/subtitles/providers/zimuku.js';
+import { AssrtProvider } from '../services/subtitles/providers/assrt.js';
 import { SubtitleCandidate, SubtitleItem, VideoQueryMeta } from '../services/subtitles/types.js';
 import { loadConfig } from '../config.js';
 
 const subhdProvider = new SubhdProvider();
 const zimukuProvider = new ZimukuProvider();
+const assrtProvider = new AssrtProvider();
 
 export const subtitlesRouter = Router();
 
@@ -154,22 +157,38 @@ export async function handleSubtitlesRequest(
     }
   }
 
+  const effectiveAssrtToken = (appConfig.assrtToken || process.env.ASSRT_TOKEN || '').trim();
+  const hasAssrtToken = Boolean(effectiveAssrtToken);
+  const assrtCacheTag =
+    hasAssrtToken && (sourcePref === 'all' || sourcePref === 'no_subhd' || sourcePref === 'assrt')
+      ? `:assrt_${crypto.createHash('sha256').update(effectiveAssrtToken).digest('hex').slice(0, 8)}`
+      : '';
+
   // Invalidate any stale zero-season cache entry for this series if season is now known
   if (queryMeta.mediaType === 'series' && queryMeta.season !== undefined && queryMeta.season > 0) {
-    const staleZeroKey = `${queryMeta.mediaType}:${queryMeta.imdbId}:0:${queryMeta.episode ?? 0}:${langPref}:${sourcePref}:${maxResults}${showOriginal ? ':orig' : ''}${keepOriginalFormat ? ':rawfmt' : ''}`;
+    const staleZeroKey = `${queryMeta.mediaType}:${queryMeta.imdbId}:0:${queryMeta.episode ?? 0}:${langPref}:${sourcePref}:${maxResults}${showOriginal ? ':orig' : ''}${keepOriginalFormat ? ':rawfmt' : ''}${assrtCacheTag}`;
     cacheManager.deleteSearchResult(staleZeroKey);
   }
 
-  const cacheKey = `${queryMeta.mediaType}:${queryMeta.imdbId}:${queryMeta.season ?? 0}:${queryMeta.episode ?? 0}:${langPref}:${sourcePref}:${maxResults}${showOriginal ? ':orig' : ''}${keepOriginalFormat ? ':rawfmt' : ''}`;
+  const cacheKey = `${queryMeta.mediaType}:${queryMeta.imdbId}:${queryMeta.season ?? 0}:${queryMeta.episode ?? 0}:${langPref}:${sourcePref}:${maxResults}${showOriginal ? ':orig' : ''}${keepOriginalFormat ? ':rawfmt' : ''}${assrtCacheTag}`;
+  const configPrefix = configStr ? `/${encodeURIComponent(configStr)}` : '';
+  const mapItemsWithBaseUrl = (items: SubtitleItem[]): SubtitleItem[] =>
+    items.map((item) => {
+      const effectivePath =
+        configPrefix && !item.path.startsWith(`${configPrefix}/`)
+          ? `${configPrefix}${item.path}`
+          : item.path;
+      return {
+        ...item,
+        path: effectivePath,
+        url: `${baseUrl}${effectivePath}`
+      };
+    });
 
   // Check search cache
   const cached = cacheManager.getSearchResults(cacheKey);
   if (cached !== null) {
-    const mapped = cached.map((item) => ({
-      ...item,
-      url: `${baseUrl}${item.path}`
-    }));
-    return res.json({ subtitles: mapped });
+    return res.json({ subtitles: mapItemsWithBaseUrl(cached) });
   }
 
   // Single-flight lock per query key
@@ -178,11 +197,7 @@ export async function handleSubtitlesRequest(
     // Re-check cache inside lock
     const rechecked = cacheManager.getSearchResults(cacheKey);
     if (rechecked !== null) {
-      const mapped = rechecked.map((item) => ({
-        ...item,
-        url: `${baseUrl}${item.path}`
-      }));
-      return res.json({ subtitles: mapped });
+      return res.json({ subtitles: mapItemsWithBaseUrl(rechecked) });
     }
 
     // Resolve media info via Cinemeta or TMDB (if not pre-resolved)
@@ -210,11 +225,15 @@ export async function handleSubtitlesRequest(
     }
 
     if (title && !queryMeta.baseTitle) {
-      const { season: inferredSeason, baseTitle } = extractSeasonAndBaseTitle(title);
-      if (queryMeta.season === undefined && inferredSeason !== undefined) {
-        queryMeta.season = inferredSeason;
+      if (queryMeta.mediaType === 'series') {
+        const { season: inferredSeason, baseTitle } = extractSeasonAndBaseTitle(title);
+        if (queryMeta.season === undefined && inferredSeason !== undefined) {
+          queryMeta.season = inferredSeason;
+        }
+        queryMeta.baseTitle = baseTitle;
+      } else {
+        queryMeta.baseTitle = title;
       }
-      queryMeta.baseTitle = baseTitle;
     }
 
     queryMeta.title = title;
@@ -229,8 +248,11 @@ export async function handleSubtitlesRequest(
     if (sourcePref === 'all' || sourcePref === 'subhd') {
       tasks.push(subhdProvider.search(queryMeta));
     }
-    if (sourcePref === 'all' || sourcePref === 'zimuku') {
+    if (sourcePref === 'all' || sourcePref === 'no_subhd' || sourcePref === 'zimuku') {
       tasks.push(zimukuProvider.search(queryMeta));
+    }
+    if ((sourcePref === 'all' && hasAssrtToken) || sourcePref === 'no_subhd' || sourcePref === 'assrt') {
+      tasks.push(assrtProvider.search(queryMeta, appConfig.assrtToken));
     }
 
     const settled = await Promise.allSettled(tasks);
@@ -258,12 +280,13 @@ export async function handleSubtitlesRequest(
       });
       const ext = format || (keepOriginalFormat ? 'ass' : 'srt');
       const rawParam = keepOriginalFormat ? '&raw=1' : '';
+      const seasonParam = queryMeta.season !== undefined ? `&s=${queryMeta.season}` : '';
       const encodedFilename = encodeURIComponent(filename);
-      const relPath = `/subtitles/dl/${cand.provider}/${cand.id}/${epNum}/subtitle.${ext}?name=${encodedFilename}${rawParam}`;
+      const relPath = `/subtitles/dl/${cand.provider}/${cand.id}/${epNum}/subtitle.${ext}?name=${encodedFilename}${rawParam}${seasonParam}`;
 
       subtitles.push({
         id: `${cand.provider}_${cand.id}_${epNum}`,
-        url: `${baseUrl}${relPath}`,
+        url: `${baseUrl}${configPrefix}${relPath}`,
         lang: 'chi',
         label,
         title: label,
@@ -279,7 +302,7 @@ export async function handleSubtitlesRequest(
       cacheManager.setSearchResults(cacheKey, subtitles);
     }
 
-    return res.json({ subtitles });
+    return res.json({ subtitles: mapItemsWithBaseUrl(subtitles) });
   } finally {
     unlock();
   }
@@ -289,13 +312,15 @@ export async function handleDownloadSubtitle(req: Request, res: Response) {
   const provider = String(req.params.provider || '').toLowerCase();
   const subId = String(req.params.subId || '');
   const episodeNum = parseInt(req.params.episodeNum || '0', 10) || 0;
+  const seasonNum = parseInt(String(req.query.s || ''), 10) || undefined;
   const filename = String(req.params.filename || '');
+  const configStr = req.params.config ? String(req.params.config) : undefined;
 
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS, HEAD');
   res.setHeader('Access-Control-Allow-Headers', '*');
 
-  const appConfig = loadConfig();
+  const appConfig = loadConfig(configStr);
   const keepOriginal =
     req.query.raw === '1' ||
     Boolean(appConfig.subtitleKeepOriginalFormat) ||
@@ -304,9 +329,10 @@ export async function handleDownloadSubtitle(req: Request, res: Response) {
 
   const extMatch = filename.match(/\.(srt|ass|ssa|vtt)$/i);
   const reqExt = extMatch ? extMatch[1].toLowerCase() : 'srt';
+  const seasonPart = provider === 'assrt' && seasonNum ? `_s${seasonNum}` : '';
   const cacheFilename = keepOriginal
-    ? `${provider}_${subId}_${episodeNum}_orig.${reqExt}`
-    : `${provider}_${subId}_${episodeNum}.srt`;
+    ? `${provider}_${subId}${seasonPart}_${episodeNum}_orig.${reqExt}`
+    : `${provider}_${subId}${seasonPart}_${episodeNum}.srt`;
 
   // 1. Fast path: disk cache hit
   if (cacheManager.hasSubtitle(cacheFilename)) {
@@ -326,9 +352,14 @@ export async function handleDownloadSubtitle(req: Request, res: Response) {
 
   const candidate: SubtitleCandidate = {
     id: subId,
-    provider: provider as 'subhd' | 'zimuku',
+    provider: provider as 'subhd' | 'zimuku' | 'assrt',
     title: '',
-    pageUrl: provider === 'subhd' ? `https://subhd.tv/a/${subId}` : `https://zmk.pw/detail/${subId}.html`,
+    pageUrl:
+      provider === 'subhd'
+        ? `https://subhd.tv/a/${subId}`
+        : provider === 'assrt'
+          ? `https://assrt.net/xml/sub/${subId.slice(0, -3) || '0'}/${subId}.xml`
+          : `https://zmk.pw/detail/${subId}.html`,
     tags: { provider, lang: [], bilingual: false, fmt: [], source: [], collection: false, imdbMatched: false },
     rate: 0,
     downloadsCount: 0,
@@ -339,6 +370,15 @@ export async function handleDownloadSubtitle(req: Request, res: Response) {
     downloaded = await subhdProvider.download(candidate);
   } else if (provider === 'zimuku') {
     downloaded = await zimukuProvider.download(candidate);
+  } else if (provider === 'assrt') {
+    downloaded = await assrtProvider.download(candidate, {
+      episode: episodeNum > 0 ? episodeNum : undefined,
+      season: seasonNum,
+      token: appConfig.assrtToken,
+      preferBilingual: langPref === 'bilingual',
+      preferTraditional: langPref === 'cht',
+      preferAss: keepOriginal
+    });
   } else {
     return res.status(400).send('Unknown subtitle provider');
   }
@@ -413,8 +453,16 @@ subtitlesRouter.options('/subtitles/dl/:provider/:subId/:episodeNum/:filename(*)
   return res.status(204).end();
 });
 
-// Download endpoint
+subtitlesRouter.options('/:config/subtitles/dl/:provider/:subId/:episodeNum/:filename(*)?', (_req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS, HEAD');
+  res.setHeader('Access-Control-Allow-Headers', '*');
+  return res.status(204).end();
+});
+
+// Download endpoints (standard and configured)
 subtitlesRouter.get('/subtitles/dl/:provider/:subId/:episodeNum/:filename(*)?', handleDownloadSubtitle);
+subtitlesRouter.get('/:config/subtitles/dl/:provider/:subId/:episodeNum/:filename(*)?', handleDownloadSubtitle);
 
 // Subtitle query endpoints (standard and configured)
 subtitlesRouter.get('/subtitles/:mediaType/:idStr.json', (req, res) => {

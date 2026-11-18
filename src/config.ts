@@ -17,11 +17,12 @@ export interface AppConfig {
   pollInterval: number; // in ms, default 1500
   subtitleEnabled: boolean;
   subtitleLang: 'bilingual' | 'chs' | 'cht';
-  subtitleSource: 'all' | 'subhd' | 'zimuku';
+  subtitleSource: 'all' | 'no_subhd' | 'subhd' | 'zimuku' | 'assrt';
   subtitleMaxResults: number;
   subtitleProxy?: string;
   subtitleShowOriginal: boolean;
   subtitleKeepOriginalFormat: boolean;
+  assrtToken?: string;
 }
 
 const DEFAULT_CONFIG: AppConfig = {
@@ -39,7 +40,8 @@ const DEFAULT_CONFIG: AppConfig = {
   subtitleMaxResults: 8,
   subtitleProxy: '',
   subtitleShowOriginal: false,
-  subtitleKeepOriginalFormat: false
+  subtitleKeepOriginalFormat: false,
+  assrtToken: ''
 };
 
 function cleanUrl(url?: string): string {
@@ -85,11 +87,12 @@ export function loadConfig(rawConfigStr?: string): AppConfig {
     pollInterval: Number(process.env.POLL_INTERVAL) || DEFAULT_CONFIG.pollInterval,
     subtitleEnabled: process.env.SUBTITLE_ENABLED !== 'false',
     subtitleLang: (process.env.SUBTITLE_LANG as 'bilingual' | 'chs' | 'cht') || DEFAULT_CONFIG.subtitleLang,
-    subtitleSource: (process.env.SUBTITLE_SOURCE as 'all' | 'subhd' | 'zimuku') || DEFAULT_CONFIG.subtitleSource,
+    subtitleSource: (process.env.SUBTITLE_SOURCE as 'all' | 'no_subhd' | 'subhd' | 'zimuku' | 'assrt') || DEFAULT_CONFIG.subtitleSource,
     subtitleMaxResults: Number(process.env.SUBTITLE_MAX_RESULTS) || DEFAULT_CONFIG.subtitleMaxResults,
     subtitleProxy: process.env.SUBTITLE_PROXY?.trim() || DEFAULT_CONFIG.subtitleProxy,
     subtitleShowOriginal: process.env.SUBTITLE_SHOW_ORIGINAL === 'true',
-    subtitleKeepOriginalFormat: process.env.SUBTITLE_KEEP_ORIGINAL_FORMAT === 'true'
+    subtitleKeepOriginalFormat: process.env.SUBTITLE_KEEP_ORIGINAL_FORMAT === 'true',
+    assrtToken: process.env.ASSRT_TOKEN?.trim() || DEFAULT_CONFIG.assrtToken
   };
 
   if (!rawConfigStr) {
@@ -138,7 +141,8 @@ export function loadConfig(rawConfigStr?: string): AppConfig {
       subtitleMaxResults: Number(parsed.subtitleMaxResults) || envConfig.subtitleMaxResults,
       subtitleProxy: parsed.subtitleProxy !== undefined ? parsed.subtitleProxy : envConfig.subtitleProxy,
       subtitleShowOriginal: parsed.subtitleShowOriginal !== undefined ? Boolean(parsed.subtitleShowOriginal) : envConfig.subtitleShowOriginal,
-      subtitleKeepOriginalFormat: parsed.subtitleKeepOriginalFormat !== undefined ? Boolean(parsed.subtitleKeepOriginalFormat) : envConfig.subtitleKeepOriginalFormat
+      subtitleKeepOriginalFormat: parsed.subtitleKeepOriginalFormat !== undefined ? Boolean(parsed.subtitleKeepOriginalFormat) : envConfig.subtitleKeepOriginalFormat,
+      assrtToken: parsed.assrtToken !== undefined ? String(parsed.assrtToken).trim() : envConfig.assrtToken
     };
   } catch (error) {
     // If decoding or parsing fails, safely fallback to env config
@@ -162,6 +166,7 @@ export function encodeConfig(config: Partial<AppConfig>): string {
   if (config.subtitleProxy) cleanConfig.subtitleProxy = config.subtitleProxy.trim();
   if (config.subtitleShowOriginal !== undefined) cleanConfig.subtitleShowOriginal = config.subtitleShowOriginal;
   if (config.subtitleKeepOriginalFormat !== undefined) cleanConfig.subtitleKeepOriginalFormat = config.subtitleKeepOriginalFormat;
+  if (config.assrtToken) cleanConfig.assrtToken = config.assrtToken.trim();
 
   return Buffer.from(JSON.stringify(cleanConfig)).toString('base64url');
 }
