@@ -18,6 +18,7 @@ pnpm-debug.log*
 _pack_temp/
 data/
 .opencode/
+openlist-background.vbs
 
 # OS & Editor
 .DS_Store
