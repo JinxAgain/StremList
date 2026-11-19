@@ -48,6 +48,13 @@ export class SubhdProvider extends BaseProvider {
     return Date.now() / 1000 > until;
   }
 
+  public static isTurnstileOrBlockText(text: string): boolean {
+    if (!text) return false;
+    return /cf-turnstile|challenges\.cloudflare\.com\/turnstile|人机验证|正在验证|安全验证|验证码|captcha|频率过高|下载次数较多/i.test(
+      text
+    );
+  }
+
   public static markDomainUnhealthy(domain: string, cooldownSecs = 600): void {
     this.unhealthyDomains.set(domain, Date.now() / 1000 + cooldownSecs);
     console.warn(`[SubHD] Marking mirror ${domain} as unhealthy for ${cooldownSecs}s`);
@@ -712,6 +719,8 @@ export class SubhdProvider extends BaseProvider {
   }
 
   public async download(candidate: SubtitleCandidate): Promise<{ buffer: Buffer; filename: string } | null> {
+    if (SubhdProvider.isRateLimited()) return null;
+
     const sid = candidate.id;
     let origDomain = this.baseUrl;
     if (candidate.pageUrl) {
@@ -776,9 +785,16 @@ export class SubhdProvider extends BaseProvider {
         );
         updateCookies(prepResp.headers['set-cookie']);
 
-        if (prepResp.status === 403 || !prepResp.data?.success) {
-          const msg = String(prepResp.data?.msg || '');
-          if (msg.includes('频率过高')) SubhdProvider.markRateLimited(600, 'prepare-download rate limit');
+        if (prepResp.status === 403) {
+          SubhdProvider.markRateLimited(1800, 'prepare-download 403');
+          return null;
+        }
+        if (!prepResp.data?.success) {
+          const msg = typeof prepResp.data === 'string' ? prepResp.data : String(prepResp.data?.msg || '');
+          if (SubhdProvider.isTurnstileOrBlockText(msg)) {
+            SubhdProvider.markRateLimited(1800, 'prepare-download Turnstile/rate limit');
+            return null;
+          }
           continue;
         }
 
@@ -798,8 +814,12 @@ export class SubhdProvider extends BaseProvider {
         updateCookies(tempResp.headers['set-cookie']);
 
         if (tempResp.status === 403) {
-          SubhdProvider.markRateLimited(600, 'temp page 403');
-          continue;
+          SubhdProvider.markRateLimited(1800, 'temp page 403');
+          return null;
+        }
+        if (typeof tempResp.data === 'string' && SubhdProvider.isTurnstileOrBlockText(tempResp.data)) {
+          SubhdProvider.markRateLimited(1800, 'Cloudflare Turnstile detected on download page');
+          return null;
         }
 
         // Step 3: POST /api/sub/down
@@ -818,9 +838,16 @@ export class SubhdProvider extends BaseProvider {
         );
         updateCookies(apiResp.headers['set-cookie']);
 
-        if (apiResp.status === 403 || !apiResp.data?.success || !apiResp.data?.url) {
-          const msg = String(apiResp.data?.msg || '');
-          if (msg.includes('频率过高')) SubhdProvider.markRateLimited(600, 'api/sub/down rate limit');
+        if (apiResp.status === 403) {
+          SubhdProvider.markRateLimited(1800, 'api/sub/down 403');
+          return null;
+        }
+        if (!apiResp.data?.success || !apiResp.data?.url) {
+          const msg = typeof apiResp.data === 'string' ? apiResp.data : String(apiResp.data?.msg || '');
+          if (SubhdProvider.isTurnstileOrBlockText(msg)) {
+            SubhdProvider.markRateLimited(1800, 'Cloudflare Turnstile / captcha required on api/sub/down');
+            return null;
+          }
           continue;
         }
 
@@ -846,6 +873,9 @@ export class SubhdProvider extends BaseProvider {
         }
       } catch (err: any) {
         console.warn(`[SubHD] Download error on ${domain} for ${sid}:`, err.message);
+        if (domain !== this.baseUrl) {
+          SubhdProvider.markDomainUnhealthy(domain, 600);
+        }
       }
     }
 

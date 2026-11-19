@@ -32,6 +32,46 @@ function getPublicBaseUrl(req: Request): string {
   return `${proto}://${host}`.replace(/\/+$/, '');
 }
 
+async function withProviderTimeout<T>(
+  task: Promise<T[]>,
+  providerName: string,
+  timeoutMs: number
+): Promise<T[]> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<T[]>((resolve) => {
+    timer = setTimeout(() => {
+      console.warn(
+        `[Subtitles] Provider '${providerName}' timed out after ${timeoutMs}ms; continuing with available results.`
+      );
+      resolve([]);
+    }, timeoutMs);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+  });
+
+  try {
+    return await Promise.race([
+      task.catch((err: any) => {
+        console.warn(`[Subtitles] Provider '${providerName}' search failed:`, err?.message || err);
+        return [];
+      }),
+      timeoutPromise
+    ]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+function sendSubtitleResponse(res: Response, bytes: Buffer, downloadName: string) {
+  res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(downloadName)}"`);
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  return res.send(bytes);
+}
+
 export function parseMediaId(mediaType: string, idStr: string, extra = ''): VideoQueryMeta {
   const cleanId = safeDecodeURIComponent(idStr.replace(/\.json$/i, '')).trim();
   let season: number | undefined;
@@ -243,16 +283,19 @@ export async function handleSubtitlesRequest(
       `[Subtitles] Query: ${queryMeta.imdbId} ('${queryMeta.title}' ${queryMeta.year ?? ''}) S${queryMeta.season ?? 0}E${queryMeta.episode ?? 0}`
     );
 
-    // Parallel search from providers
+    // Parallel search from providers with soft per-provider timeout
+    const providerTimeoutMs = Number(process.env.SUBTITLE_PROVIDER_TIMEOUT_MS) || 5000;
     const tasks: Promise<SubtitleCandidate[]>[] = [];
     if (sourcePref === 'all' || sourcePref === 'subhd') {
-      tasks.push(subhdProvider.search(queryMeta));
+      tasks.push(withProviderTimeout(subhdProvider.search(queryMeta), 'subhd', providerTimeoutMs));
     }
     if (sourcePref === 'all' || sourcePref === 'no_subhd' || sourcePref === 'zimuku') {
-      tasks.push(zimukuProvider.search(queryMeta));
+      tasks.push(withProviderTimeout(zimukuProvider.search(queryMeta), 'zimuku', providerTimeoutMs));
     }
     if ((sourcePref === 'all' && hasAssrtToken) || sourcePref === 'no_subhd' || sourcePref === 'assrt') {
-      tasks.push(assrtProvider.search(queryMeta, appConfig.assrtToken));
+      tasks.push(
+        withProviderTimeout(assrtProvider.search(queryMeta, appConfig.assrtToken), 'assrt', providerTimeoutMs)
+      );
     }
 
     const settled = await Promise.allSettled(tasks);
@@ -334,115 +377,141 @@ export async function handleDownloadSubtitle(req: Request, res: Response) {
     ? `${provider}_${subId}${seasonPart}_${episodeNum}_orig.${reqExt}`
     : `${provider}_${subId}${seasonPart}_${episodeNum}.srt`;
 
+  const downloadName = (req.query.name as string) || filename;
+
   // 1. Fast path: disk cache hit
   if (cacheManager.hasSubtitle(cacheFilename)) {
     const cachedBytes = cacheManager.getSubtitle(cacheFilename);
     if (cachedBytes) {
-      const downloadName = (req.query.name as string) || filename;
-      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(downloadName)}"`);
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.setHeader('Cache-Control', 'public, max-age=86400');
-      return res.send(cachedBytes);
+      return sendSubtitleResponse(res, cachedBytes, downloadName);
     }
   }
 
-  // 2. Slow path: fetch from upstream
-  console.info(`[Download] Cache MISS: '${cacheFilename}'. Fetching from upstream ${provider}...`);
-  let downloaded: { buffer: Buffer; filename: string } | null = null;
-
-  const candidate: SubtitleCandidate = {
-    id: subId,
-    provider: provider as 'subhd' | 'zimuku' | 'assrt',
-    title: '',
-    pageUrl:
-      provider === 'subhd'
-        ? `https://subhd.tv/a/${subId}`
-        : provider === 'assrt'
-          ? `https://assrt.net/xml/sub/${subId.slice(0, -3) || '0'}/${subId}.xml`
-          : `https://zmk.pw/detail/${subId}.html`,
-    tags: { provider, lang: [], bilingual: false, fmt: [], source: [], collection: false, imdbMatched: false },
-    rate: 0,
-    downloadsCount: 0,
-    score: 0
-  };
-
-  if (provider === 'subhd') {
-    downloaded = await subhdProvider.download(candidate);
-  } else if (provider === 'zimuku') {
-    downloaded = await zimukuProvider.download(candidate);
-  } else if (provider === 'assrt') {
-    downloaded = await assrtProvider.download(candidate, {
-      episode: episodeNum > 0 ? episodeNum : undefined,
-      season: seasonNum,
-      token: appConfig.assrtToken,
-      preferBilingual: langPref === 'bilingual',
-      preferTraditional: langPref === 'cht',
-      preferAss: keepOriginal
-    });
-  } else {
-    return res.status(400).send('Unknown subtitle provider');
+  const failKey = `${provider}:${subId}:${seasonNum ?? 0}:${episodeNum}`;
+  if (cacheManager.isDownloadFailed(failKey)) {
+    return res.status(404).send('Upstream subtitle download recently failed');
+  }
+  if (provider === 'subhd' && SubhdProvider.isRateLimited()) {
+    return res.status(404).send('SubHD temporarily rate-limited or verification required');
   }
 
-  if (!downloaded || !downloaded.buffer) {
-    return res.status(404).send('Upstream subtitle download failed');
-  }
-
-  const { buffer: archiveBytes, filename: rawFilename } = downloaded;
-  const targetEp = episodeNum > 0 ? episodeNum : undefined;
-
-  let subBytes: Buffer | null = null;
-  let subName = rawFilename;
-
-  const preferBilingual = langPref === 'bilingual';
-  const preferTraditional = langPref === 'cht';
-  const preferAss = keepOriginal;
-
-  // 3. Direct subtitle vs archive unpack
-  if (
-    SUBTITLE_EXTENSIONS.some((ext) => rawFilename.toLowerCase().endsWith(ext)) ||
-    SubtitleExtractor.isRawSubtitleBuffer(archiveBytes)
-  ) {
-    subBytes = archiveBytes;
-  } else {
-    const extracted = SubtitleExtractor.extractBestSubtitle(
-      archiveBytes,
-      rawFilename,
-      targetEp,
-      preferBilingual,
-      preferTraditional,
-      preferAss
-    );
-    if (!extracted) {
-      return res.status(502).send('Failed to extract subtitle from archive');
+  // 2. Slow path: single-flight fetch from upstream
+  const unlock = await cacheManager.getFlightLock(`dl:${cacheFilename}`);
+  try {
+    // Re-check disk cache and negative cache inside lock
+    if (cacheManager.hasSubtitle(cacheFilename)) {
+      const cachedBytes = cacheManager.getSubtitle(cacheFilename);
+      if (cachedBytes) {
+        return sendSubtitleResponse(res, cachedBytes, downloadName);
+      }
     }
-    subBytes = extracted.buffer;
-    subName = extracted.filename;
-  }
-
-  // 4. Normalize
-  let outputBuffer: Buffer;
-  if (keepOriginal) {
-    const orig = SubtitleCleaner.normalizeToUtf8Original(subBytes, subName);
-    outputBuffer = orig.buffer;
-    if (!SubtitleCleaner.isValidSubtitleContent(outputBuffer.toString('utf-8'))) {
-      return res.status(502).send('Subtitle normalization resulted in invalid original subtitle format');
+    if (cacheManager.isDownloadFailed(failKey)) {
+      return res.status(404).send('Upstream subtitle download recently failed');
     }
-  } else {
-    outputBuffer = SubtitleCleaner.normalizeToUtf8Srt(subBytes, subName);
-    if (!SubtitleCleaner.isValidSubtitleContent(outputBuffer.toString('utf-8'))) {
-      return res.status(502).send('Subtitle normalization resulted in invalid SRT format');
+    if (provider === 'subhd' && SubhdProvider.isRateLimited()) {
+      return res.status(404).send('SubHD temporarily rate-limited or verification required');
     }
+
+    console.info(`[Download] Cache MISS: '${cacheFilename}'. Fetching from upstream ${provider}...`);
+    let downloaded: { buffer: Buffer; filename: string } | null = null;
+
+    const candidate: SubtitleCandidate = {
+      id: subId,
+      provider: provider as 'subhd' | 'zimuku' | 'assrt',
+      title: '',
+      pageUrl:
+        provider === 'subhd'
+          ? `https://subhd.tv/a/${subId}`
+          : provider === 'assrt'
+            ? `https://assrt.net/xml/sub/${subId.slice(0, -3) || '0'}/${subId}.xml`
+            : `https://zmk.pw/detail/${subId}.html`,
+      tags: { provider, lang: [], bilingual: false, fmt: [], source: [], collection: false, imdbMatched: false },
+      rate: 0,
+      downloadsCount: 0,
+      score: 0
+    };
+
+    if (provider === 'subhd') {
+      downloaded = await subhdProvider.download(candidate);
+    } else if (provider === 'zimuku') {
+      downloaded = await zimukuProvider.download(candidate);
+    } else if (provider === 'assrt') {
+      downloaded = await assrtProvider.download(candidate, {
+        episode: episodeNum > 0 ? episodeNum : undefined,
+        season: seasonNum,
+        token: appConfig.assrtToken,
+        preferBilingual: langPref === 'bilingual',
+        preferTraditional: langPref === 'cht',
+        preferAss: keepOriginal
+      });
+    } else {
+      return res.status(400).send('Unknown subtitle provider');
+    }
+
+    if (!downloaded || !downloaded.buffer) {
+      cacheManager.markDownloadFailed(failKey, 1800);
+      return res.status(404).send('Upstream subtitle download failed');
+    }
+
+    const { buffer: archiveBytes, filename: rawFilename } = downloaded;
+    const targetEp = episodeNum > 0 ? episodeNum : undefined;
+
+    let subBytes: Buffer | null = null;
+    let subName = rawFilename;
+
+    const preferBilingual = langPref === 'bilingual';
+    const preferTraditional = langPref === 'cht';
+    const preferAss = keepOriginal;
+
+    // 3. Direct subtitle vs archive unpack
+    if (
+      SUBTITLE_EXTENSIONS.some((ext) => rawFilename.toLowerCase().endsWith(ext)) ||
+      SubtitleExtractor.isRawSubtitleBuffer(archiveBytes)
+    ) {
+      subBytes = archiveBytes;
+    } else {
+      const extracted = SubtitleExtractor.extractBestSubtitle(
+        archiveBytes,
+        rawFilename,
+        targetEp,
+        preferBilingual,
+        preferTraditional,
+        preferAss
+      );
+      if (!extracted) {
+        cacheManager.markDownloadFailed(failKey, 1800);
+        return res.status(502).send('Failed to extract subtitle from archive');
+      }
+      subBytes = extracted.buffer;
+      subName = extracted.filename;
+    }
+
+    // 4. Normalize
+    let outputBuffer: Buffer;
+    if (keepOriginal) {
+      const orig = SubtitleCleaner.normalizeToUtf8Original(subBytes, subName);
+      outputBuffer = orig.buffer;
+      if (!SubtitleCleaner.isValidSubtitleContent(outputBuffer.toString('utf-8'))) {
+        cacheManager.markDownloadFailed(failKey, 1800);
+        return res.status(502).send('Subtitle normalization resulted in invalid original subtitle format');
+      }
+    } else {
+      outputBuffer = SubtitleCleaner.normalizeToUtf8Srt(subBytes, subName);
+      if (!SubtitleCleaner.isValidSubtitleContent(outputBuffer.toString('utf-8'))) {
+        cacheManager.markDownloadFailed(failKey, 1800);
+        return res.status(502).send('Subtitle normalization resulted in invalid SRT format');
+      }
+    }
+
+    // 5. Save to disk cache
+    cacheManager.saveSubtitle(cacheFilename, outputBuffer);
+    cacheManager.clearDownloadFailed(failKey);
+
+    // 6. Stream to player
+    return sendSubtitleResponse(res, outputBuffer, downloadName);
+  } finally {
+    unlock();
   }
-
-  // 5. Save to disk cache
-  cacheManager.saveSubtitle(cacheFilename, outputBuffer);
-
-  // 6. Stream to player
-  const downloadName = (req.query.name as string) || filename;
-  res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(downloadName)}"`);
-  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-  res.setHeader('Cache-Control', 'public, max-age=86400');
-  return res.send(outputBuffer);
 }
 
 // OPTIONS pre-flight

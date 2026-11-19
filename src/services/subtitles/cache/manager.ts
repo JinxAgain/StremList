@@ -14,9 +14,10 @@ export class CacheManager {
   private searchCache = new Map<string, CacheEntry>();
   private readonly ttlSeconds: number;
   private flightLocks = new Map<string, Promise<void>>();
+  private failedDownloads = new Map<string, number>();
   private saveTimeout: NodeJS.Timeout | null = null;
 
-  constructor(customCacheDir?: string, ttlHours = 12) {
+  constructor(customCacheDir?: string, ttlHours = 168) {
     this.cacheDir = customCacheDir || path.resolve(process.cwd(), 'data/cache');
     this.subtitlesDir = path.join(this.cacheDir, 'subtitles');
     this.searchCacheFile = path.join(this.cacheDir, 'search_cache.json');
@@ -24,6 +25,10 @@ export class CacheManager {
 
     this.ensureDirectories();
     this.loadSearchCache();
+  }
+
+  public getTtlSeconds(): number {
+    return this.ttlSeconds;
   }
 
   private ensureDirectories(): void {
@@ -153,6 +158,22 @@ export class CacheManager {
     }
   }
 
+  public markDownloadFailed(key: string, ttlSeconds = 1800): void {
+    this.failedDownloads.set(key, Date.now() / 1000 + ttlSeconds);
+  }
+
+  public isDownloadFailed(key: string): boolean {
+    const expiresAt = this.failedDownloads.get(key);
+    if (expiresAt === undefined) return false;
+    if (Date.now() / 1000 < expiresAt) return true;
+    this.failedDownloads.delete(key);
+    return false;
+  }
+
+  public clearDownloadFailed(key: string): void {
+    this.failedDownloads.delete(key);
+  }
+
   public cleanExpired(): void {
     const now = Math.floor(Date.now() / 1000);
     let changed = false;
@@ -160,6 +181,12 @@ export class CacheManager {
       if (now - v.createdAt >= this.ttlSeconds) {
         this.searchCache.delete(k);
         changed = true;
+      }
+    }
+    const nowSec = Date.now() / 1000;
+    for (const [k, expiresAt] of this.failedDownloads.entries()) {
+      if (nowSec >= expiresAt) {
+        this.failedDownloads.delete(k);
       }
     }
     if (changed) this.scheduleSave();

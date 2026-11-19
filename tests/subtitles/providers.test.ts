@@ -904,6 +904,97 @@ describe('BaseProvider utilities', () => {
       expect(results[1].tags.collection).toBe(true);
       expect(results[2].tags.collection).toBe(true);
     });
+
+    it('detects Cloudflare Turnstile in download() and circuit-breaks without looping fallback domains', async () => {
+      const subhdInstance = new SubhdProvider();
+      const client = (subhdInstance as any).client;
+      const cand: SubtitleCandidate = {
+        id: 'turnstile1',
+        provider: 'subhd',
+        title: 'Test Movie',
+        pageUrl: 'https://subhd.tv/a/turnstile1',
+        tags: { provider: 'subhd', lang: ['chs'], bilingual: true, fmt: ['ass'], source: [], collection: false, imdbMatched: true },
+        rate: 5,
+        downloadsCount: 100,
+        score: 0
+      };
+
+      const postSpy = vi.spyOn(client, 'post').mockResolvedValueOnce({
+        status: 200,
+        headers: {},
+        data: { success: true, url: '/down/turnstile1' }
+      });
+      const getSpy = vi.spyOn(client, 'get').mockResolvedValueOnce({
+        status: 200,
+        headers: {},
+        data: '<div class="cf-turnstile">今天下载次数较多，请先完成下方的人机验证再下载。</div>'
+      });
+
+      try {
+        expect(SubhdProvider.isRateLimited()).toBe(false);
+        const first = await subhdInstance.download(cand);
+        expect(first).toBeNull();
+        expect(SubhdProvider.isRateLimited()).toBe(true);
+        // Should abort immediately after temp page Turnstile detection without trying fallback domains
+        expect(postSpy).toHaveBeenCalledTimes(1);
+        expect(getSpy).toHaveBeenCalledTimes(1);
+
+        // Subsequent call short-circuits immediately with zero network requests
+        const second = await subhdInstance.download(cand);
+        expect(second).toBeNull();
+        expect(postSpy).toHaveBeenCalledTimes(1);
+        expect(getSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.restoreAllMocks();
+        (SubhdProvider as any).rateLimitedUntil = 0;
+        (SubhdProvider as any).unhealthyDomains.clear();
+      }
+    });
+
+    it('triggers circuit breaker when /api/sub/down rejects with captcha message', async () => {
+      const subhdInstance = new SubhdProvider();
+      const client = (subhdInstance as any).client;
+      const cand: SubtitleCandidate = {
+        id: 'turnstile2',
+        provider: 'subhd',
+        title: 'Test Movie',
+        pageUrl: 'https://subhd.tv/a/turnstile2',
+        tags: { provider: 'subhd', lang: ['chs'], bilingual: true, fmt: ['srt'], source: [], collection: false, imdbMatched: true },
+        rate: 5,
+        downloadsCount: 50,
+        score: 0
+      };
+
+      const postSpy = vi
+        .spyOn(client, 'post')
+        .mockResolvedValueOnce({
+          status: 200,
+          headers: {},
+          data: { success: true, url: '/down/turnstile2' }
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          headers: {},
+          data: { success: false, msg: '请先完成人机验证再下载' }
+        });
+      const getSpy = vi.spyOn(client, 'get').mockResolvedValueOnce({
+        status: 200,
+        headers: {},
+        data: '<html><body>Download Ready</body></html>'
+      });
+
+      try {
+        const res = await subhdInstance.download(cand);
+        expect(res).toBeNull();
+        expect(SubhdProvider.isRateLimited()).toBe(true);
+        expect(postSpy).toHaveBeenCalledTimes(2);
+        expect(getSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.restoreAllMocks();
+        (SubhdProvider as any).rateLimitedUntil = 0;
+        (SubhdProvider as any).unhealthyDomains.clear();
+      }
+    });
   });
 });
 

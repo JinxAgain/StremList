@@ -422,5 +422,70 @@ Hello Converted SRT World
       }
     }
   });
+
+  it('caches failed upstream downloads in negative cache to avoid repeated slow retries', async () => {
+    const failKey = 'zimuku:999888:0:0';
+    cacheManager.clearDownloadFailed(failKey);
+    const dlSpy = vi.spyOn(ZimukuProvider.prototype, 'download').mockResolvedValue(null);
+
+    try {
+      const first = await request(app).get('/subtitles/dl/zimuku/999888/0/subtitle.srt');
+      expect(first.status).toBe(404);
+      expect(dlSpy).toHaveBeenCalledTimes(1);
+
+      const second = await request(app).get('/subtitles/dl/zimuku/999888/0/subtitle.srt');
+      expect(second.status).toBe(404);
+      expect(dlSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      cacheManager.clearDownloadFailed(failKey);
+    }
+  });
+
+  it('applies per-provider search timeout so hanging providers do not block fast providers', async () => {
+    const origTimeout = process.env.SUBTITLE_PROVIDER_TIMEOUT_MS;
+    process.env.SUBTITLE_PROVIDER_TIMEOUT_MS = '50';
+
+    const customConfig = {
+      subtitleSource: 'no_subhd',
+      assrtToken: 'timeouttoken1234567890123456789'
+    };
+    const b64 = Buffer.from(JSON.stringify(customConfig)).toString('base64url');
+
+    vi.spyOn(CinemetaClient, 'resolveMediaInfo').mockResolvedValueOnce({
+      title: 'Fast Response Movie',
+      year: 2025,
+      resolvedImdb: 'tt6666666'
+    });
+    vi.spyOn(ZimukuProvider.prototype, 'search').mockImplementation(() => new Promise(() => {}));
+    vi.spyOn(AssrtProvider.prototype, 'search').mockResolvedValueOnce([
+      {
+        id: '909090',
+        provider: 'assrt',
+        title: 'Fast.Response.Movie.2025.1080p',
+        pageUrl: 'https://assrt.net/xml/sub/909/909090.xml',
+        tags: { provider: 'assrt', lang: ['chs'], bilingual: true, fmt: ['srt'], source: [], collection: false, imdbMatched: true },
+        rate: 5,
+        downloadsCount: 20,
+        score: 0
+      }
+    ]);
+
+    try {
+      const start = Date.now();
+      const res = await request(app).get(`/${b64}/subtitles/movie/tt6666666.json`);
+      const elapsed = Date.now() - start;
+
+      expect(res.status).toBe(200);
+      expect(elapsed).toBeLessThan(1500);
+      expect(res.body.subtitles).toHaveLength(1);
+      expect(res.body.subtitles[0].id).toBe('assrt_909090_0');
+    } finally {
+      if (origTimeout === undefined) delete process.env.SUBTITLE_PROVIDER_TIMEOUT_MS;
+      else process.env.SUBTITLE_PROVIDER_TIMEOUT_MS = origTimeout;
+      for (const k of Array.from((cacheManager as any).searchCache.keys()) as string[]) {
+        if (k.includes('tt6666666')) cacheManager.deleteSearchResult(k);
+      }
+    }
+  });
 });
 

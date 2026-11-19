@@ -66,4 +66,25 @@ describe('CacheManager', () => {
     unlock();
     expect(executionCount).toBe(1);
   });
+
+  it('uses 7-day default search cache TTL and tracks negative download failures', () => {
+    expect(cache.getTtlSeconds()).toBe(7 * 24 * 3600);
+
+    const key = 'subhd:abc123:0:1';
+    expect(cache.isDownloadFailed(key)).toBe(false);
+
+    cache.markDownloadFailed(key, 60);
+    expect(cache.isDownloadFailed(key)).toBe(true);
+
+    cache.clearDownloadFailed(key);
+    expect(cache.isDownloadFailed(key)).toBe(false);
+
+    // Expired negative entries are pruned automatically
+    cache.markDownloadFailed(key, -1);
+    expect(cache.isDownloadFailed(key)).toBe(false);
+
+    cache.markDownloadFailed('subhd:expired:0:0', -5);
+    cache.cleanExpired();
+    expect(cache.isDownloadFailed('subhd:expired:0:0')).toBe(false);
+  });
 });
