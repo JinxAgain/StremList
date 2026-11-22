@@ -11,6 +11,9 @@ import {
   extractSeasonAndBaseTitle
 } from './base.js';
 import { SubtitleCandidate, SubtitleTags, VideoQueryMeta, SubhdSubjectItem } from '../types.js';
+import { subhdSession, extractCookieValue } from './subhd-session.js';
+
+export type SubhdBlockReason = 'rate_limited' | 'turnstile_required' | 'wechat_required' | 'daily_limit';
 
 export interface ResolvedSubhdWork {
   dId: string;
@@ -22,6 +25,7 @@ export class SubhdProvider extends BaseProvider {
   public readonly name = 'subhd';
 
   private static rateLimitedUntil = 0;
+  private static blockReason: SubhdBlockReason | null = null;
   private static unhealthyDomains = new Map<string, number>();
 
   private readonly baseUrl: string;
@@ -38,9 +42,30 @@ export class SubhdProvider extends BaseProvider {
     return Date.now() / 1000 < this.rateLimitedUntil;
   }
 
-  public static markRateLimited(durationSeconds = 600, reason = 'Rate limited'): void {
+  public static markBlocked(reason: SubhdBlockReason, durationSeconds = 1800, detail = ''): void {
     this.rateLimitedUntil = Date.now() / 1000 + durationSeconds;
-    console.warn(`[SubHD] IP rate limit detected (${reason}). Cooling down for ${durationSeconds}s.`);
+    this.blockReason = reason;
+    const suffix = detail ? ` (${detail})` : '';
+    console.warn(`[SubHD] Blocked [${reason}]${suffix}. Cooling down for ${durationSeconds}s.`);
+  }
+
+  public static getBlockState(): { reason: SubhdBlockReason | null; until: number } {
+    if (!this.isRateLimited()) {
+      return { reason: null, until: 0 };
+    }
+    return {
+      reason: this.blockReason || 'rate_limited',
+      until: Math.floor(this.rateLimitedUntil)
+    };
+  }
+
+  public static clearBlock(): void {
+    this.rateLimitedUntil = 0;
+    this.blockReason = null;
+  }
+
+  public static markRateLimited(durationSeconds = 600, reason = 'Rate limited'): void {
+    this.markBlocked('rate_limited', durationSeconds, reason);
   }
 
   public static isDomainHealthy(domain: string): boolean {
@@ -50,9 +75,90 @@ export class SubhdProvider extends BaseProvider {
 
   public static isTurnstileOrBlockText(text: string): boolean {
     if (!text) return false;
-    return /cf-turnstile|challenges\.cloudflare\.com\/turnstile|人机验证|正在验证|安全验证|验证码|captcha|频率过高|下载次数较多/i.test(
+    return /cf-turnstile|challenges\.cloudflare\.com\/turnstile|人机验证|正在验证|安全验证|验证码|captcha|频率过高|下载次数较多|公众号|wechat/i.test(
       text
     );
+  }
+
+  public async requestWechatCode(): Promise<{ code: string; expiresAt: number; qrUrl: string; domain: string }> {
+    const domain = this.baseUrl;
+    const existing = subhdSession.load();
+    const headers: Record<string, string> = {
+      Origin: domain,
+      Referer: `${domain}/`,
+      Accept: 'application/json, text/javascript, */*; q=0.01',
+      'X-Requested-With': 'XMLHttpRequest'
+    };
+    if (existing?.wxg && (!existing.domain || existing.domain === domain)) {
+      headers.Cookie = `wxg=${existing.wxg}`;
+    }
+
+    const resp = await this.client.post(`${domain}/api/wechat-gate/code`, {}, {
+      headers,
+      timeout: 8000,
+      validateStatus: () => true
+    });
+
+    if (resp.status < 200 || resp.status >= 300 || !resp.data?.code) {
+      const msg = typeof resp.data?.msg === 'string' ? resp.data.msg : `HTTP ${resp.status}`;
+      throw new Error(`Failed to obtain SubHD WeChat code (${msg})`);
+    }
+
+    const setCookieWxg = extractCookieValue(resp.headers?.['set-cookie'], 'wxg');
+    const fallbackWxg = existing?.domain === domain ? existing.wxg : '';
+    const wxg = setCookieWxg || fallbackWxg;
+    if (!wxg) {
+      throw new Error('SubHD did not return a wxg session cookie');
+    }
+
+    subhdSession.save({
+      wxg,
+      domain,
+      verified: false,
+      verifiedAt: undefined,
+      expiresAt: undefined
+    });
+
+    return {
+      code: String(resp.data.code),
+      expiresAt: Date.now() + 5 * 60 * 1000,
+      qrUrl: `${domain}/public/images/wechat-qr.jpg`,
+      domain
+    };
+  }
+
+  public async checkWechatStatus(): Promise<{ verified: boolean }> {
+    const session = subhdSession.load();
+    if (!session?.wxg) {
+      return { verified: false };
+    }
+
+    const domain = session.domain || this.baseUrl;
+    const resp = await this.client.get(`${domain}/api/wechat-gate/status`, {
+      headers: {
+        Origin: domain,
+        Referer: `${domain}/`,
+        Accept: 'application/json, text/javascript, */*; q=0.01',
+        'Cache-Control': 'no-cache',
+        Cookie: `wxg=${session.wxg}`
+      },
+      timeout: 8000,
+      validateStatus: () => true
+    });
+
+    if (resp.status >= 200 && resp.status < 300 && resp.data?.verified === true) {
+      if (!session.verified) {
+        subhdSession.markVerified();
+      }
+      SubhdProvider.clearBlock();
+      return { verified: true };
+    }
+
+    if (resp.status >= 200 && resp.status < 300 && resp.data?.verified === false && session.verified) {
+      subhdSession.markUnverified();
+    }
+
+    return { verified: false };
   }
 
   public static markDomainUnhealthy(domain: string, cooldownSecs = 600): void {
@@ -718,6 +824,13 @@ export class SubhdProvider extends BaseProvider {
     return { tags, dlCount, rate };
   }
 
+  private secondsUntilNextShanghaiMidnight(): number {
+    const off = 8 * 3600e3;
+    const now = Date.now();
+    const next = (Math.floor((now + off) / 86400e3) + 1) * 86400e3 - off;
+    return Math.max(60, Math.ceil((next - now) / 1000));
+  }
+
   public async download(candidate: SubtitleCandidate): Promise<{ buffer: Buffer; filename: string } | null> {
     if (SubhdProvider.isRateLimited()) return null;
 
@@ -730,7 +843,12 @@ export class SubhdProvider extends BaseProvider {
       } catch {}
     }
 
-    const domains = [origDomain, ...this.fallbackUrls].filter((d, i, self) =>
+    const wxg = subhdSession.getWxg();
+    const sessionDomain = subhdSession.getDomain();
+    const rawDomains = wxg && sessionDomain
+      ? [sessionDomain, origDomain, ...this.fallbackUrls]
+      : [origDomain, ...this.fallbackUrls];
+    const domains = rawDomains.filter((d, i, self) =>
       self.indexOf(d) === i && SubhdProvider.isDomainHealthy(d)
     );
     if (domains.length === 0) domains.push(origDomain);
@@ -739,15 +857,22 @@ export class SubhdProvider extends BaseProvider {
       const pageUrl = `${domain}/a/${sid}`;
       try {
         const cookies: Record<string, string> = {};
+        if (wxg && sessionDomain && domain === sessionDomain) {
+          cookies.wxg = wxg;
+        }
         const updateCookies = (setCookieHeaders?: string[] | string) => {
           if (!setCookieHeaders) return;
           const arr = Array.isArray(setCookieHeaders) ? setCookieHeaders : [setCookieHeaders];
           for (const header of arr) {
             const parts = header.split(';');
             if (parts.length > 0) {
-              const [k, v] = parts[0].split('=');
-              if (k && v) {
-                cookies[k.trim()] = v.trim();
+              const eqIdx = parts[0].indexOf('=');
+              if (eqIdx > 0) {
+                const k = parts[0].slice(0, eqIdx).trim();
+                const v = parts[0].slice(eqIdx + 1).trim();
+                if (k && v) {
+                  cookies[k] = v;
+                }
               }
             }
           }
@@ -783,7 +908,7 @@ export class SubhdProvider extends BaseProvider {
             validateStatus: () => true
           }
         );
-        updateCookies(prepResp.headers['set-cookie']);
+        updateCookies(prepResp.headers?.['set-cookie']);
 
         if (prepResp.status === 403) {
           SubhdProvider.markRateLimited(1800, 'prepare-download 403');
@@ -811,21 +936,32 @@ export class SubhdProvider extends BaseProvider {
           timeout: 8000,
           validateStatus: () => true
         });
-        updateCookies(tempResp.headers['set-cookie']);
+        updateCookies(tempResp.headers?.['set-cookie']);
 
         if (tempResp.status === 403) {
           SubhdProvider.markRateLimited(1800, 'temp page 403');
           return null;
         }
-        if (typeof tempResp.data === 'string' && SubhdProvider.isTurnstileOrBlockText(tempResp.data)) {
-          SubhdProvider.markRateLimited(1800, 'Cloudflare Turnstile detected on download page');
+        // Real /down/<sid> HTML embeds gate config strings in inline scripts/hidden divs; let Step 3 verify authoritatively.
+        const isNormalDownPage =
+          typeof tempResp.data === 'string' &&
+          (tempResp.data.includes('download-card') || tempResp.data.includes('/api/sub/down'));
+        if (
+          typeof tempResp.data === 'string' &&
+          !isNormalDownPage &&
+          SubhdProvider.isTurnstileOrBlockText(tempResp.data)
+        ) {
+          SubhdProvider.markBlocked('turnstile_required', 1800, 'Cloudflare Turnstile detected on download page');
           return null;
         }
+
+        // Always report the host's real time zone; never spoof it to change which verification the site requires.
+        const hostTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
 
         // Step 3: POST /api/sub/down
         const apiResp = await this.client.post(
           `${domain}/api/sub/down`,
-          { sid, cap: '' },
+          { sid, turnstileToken: '', timeZone: hostTimeZone },
           {
             headers: {
               ...ajaxHeaders,
@@ -836,22 +972,39 @@ export class SubhdProvider extends BaseProvider {
             validateStatus: () => true
           }
         );
-        updateCookies(apiResp.headers['set-cookie']);
+        updateCookies(apiResp.headers?.['set-cookie']);
+
+        const apiData = typeof apiResp.data === 'object' && apiResp.data !== null ? apiResp.data : null;
+        if (apiData?.dailyLimitReached) {
+          SubhdProvider.markBlocked('daily_limit', this.secondsUntilNextShanghaiMidnight(), 'dailyLimitReached');
+          return null;
+        }
+        if (apiData?.wechatRequired) {
+          if (wxg && domain === sessionDomain) {
+            subhdSession.markUnverified();
+          }
+          SubhdProvider.markBlocked('wechat_required', 6 * 3600, 'wechatRequired');
+          return null;
+        }
+        if (apiData?.turnstileRequired) {
+          SubhdProvider.markBlocked('turnstile_required', 6 * 3600, 'turnstileRequired');
+          return null;
+        }
 
         if (apiResp.status === 403) {
           SubhdProvider.markRateLimited(1800, 'api/sub/down 403');
           return null;
         }
-        if (!apiResp.data?.success || !apiResp.data?.url) {
-          const msg = typeof apiResp.data === 'string' ? apiResp.data : String(apiResp.data?.msg || '');
+        if (!apiData?.success || !apiData?.url) {
+          const msg = typeof apiResp.data === 'string' ? apiResp.data : String(apiData?.msg || '');
           if (SubhdProvider.isTurnstileOrBlockText(msg)) {
-            SubhdProvider.markRateLimited(1800, 'Cloudflare Turnstile / captcha required on api/sub/down');
+            SubhdProvider.markBlocked('turnstile_required', 1800, 'Cloudflare Turnstile / captcha required on api/sub/down');
             return null;
           }
           continue;
         }
 
-        let fileUrl: string = apiResp.data.url;
+        let fileUrl: string = apiData.url;
         if (!fileUrl.startsWith('http')) fileUrl = `${domain}${fileUrl}`;
 
         // Step 4: Fetch actual archive bytes

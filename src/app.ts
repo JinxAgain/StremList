@@ -7,6 +7,7 @@ import { handleManifest } from './routes/manifest.js';
 import { handleStream } from './routes/stream.js';
 import { handlePlay } from './routes/play.js';
 import { handleConfigure, handleOpenListLogin, handleOpenListTest, handleSaveConfig, handleAssrtTest } from './routes/configure.js';
+import { handleSubhdWechatCode, handleSubhdWechatStatus, handleSubhdWechatReset } from './routes/subhd.js';
 import { subtitlesRouter } from './routes/subtitles.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -87,6 +88,9 @@ export function createApp(): Express {
   app.post('/api/openlist/login', handleOpenListLogin);
   app.post('/api/openlist/test', handleOpenListTest);
   app.post('/api/assrt/test', handleAssrtTest);
+  app.post('/api/subhd/wechat/code', handleSubhdWechatCode);
+  app.get('/api/subhd/wechat/status', handleSubhdWechatStatus);
+  app.post('/api/subhd/wechat/reset', handleSubhdWechatReset);
 
   // Stremio Addon Protocol: Manifest
   app.get('/manifest.json', handleManifest);

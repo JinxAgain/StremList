@@ -203,14 +203,17 @@ export async function handleSubtitlesRequest(
     hasAssrtToken && (sourcePref === 'all' || sourcePref === 'no_subhd' || sourcePref === 'assrt')
       ? `:assrt_${crypto.createHash('sha256').update(effectiveAssrtToken).digest('hex').slice(0, 8)}`
       : '';
+  const subhdWanted = sourcePref === 'all' || sourcePref === 'subhd';
+  const subhdOff = subhdWanted && SubhdProvider.isRateLimited();
+  const subhdCacheTag = subhdOff ? ':subhd_off' : '';
 
   // Invalidate any stale zero-season cache entry for this series if season is now known
   if (queryMeta.mediaType === 'series' && queryMeta.season !== undefined && queryMeta.season > 0) {
-    const staleZeroKey = `${queryMeta.mediaType}:${queryMeta.imdbId}:0:${queryMeta.episode ?? 0}:${langPref}:${sourcePref}:${maxResults}${showOriginal ? ':orig' : ''}${keepOriginalFormat ? ':rawfmt' : ''}${assrtCacheTag}`;
+    const staleZeroKey = `${queryMeta.mediaType}:${queryMeta.imdbId}:0:${queryMeta.episode ?? 0}:${langPref}:${sourcePref}:${maxResults}${showOriginal ? ':orig' : ''}${keepOriginalFormat ? ':rawfmt' : ''}${assrtCacheTag}${subhdCacheTag}`;
     cacheManager.deleteSearchResult(staleZeroKey);
   }
 
-  const cacheKey = `${queryMeta.mediaType}:${queryMeta.imdbId}:${queryMeta.season ?? 0}:${queryMeta.episode ?? 0}:${langPref}:${sourcePref}:${maxResults}${showOriginal ? ':orig' : ''}${keepOriginalFormat ? ':rawfmt' : ''}${assrtCacheTag}`;
+  const cacheKey = `${queryMeta.mediaType}:${queryMeta.imdbId}:${queryMeta.season ?? 0}:${queryMeta.episode ?? 0}:${langPref}:${sourcePref}:${maxResults}${showOriginal ? ':orig' : ''}${keepOriginalFormat ? ':rawfmt' : ''}${assrtCacheTag}${subhdCacheTag}`;
   const configPrefix = configStr ? `/${encodeURIComponent(configStr)}` : '';
   const mapItemsWithBaseUrl = (items: SubtitleItem[]): SubtitleItem[] =>
     items.map((item) => {
@@ -286,7 +289,7 @@ export async function handleSubtitlesRequest(
     // Parallel search from providers with soft per-provider timeout
     const providerTimeoutMs = Number(process.env.SUBTITLE_PROVIDER_TIMEOUT_MS) || 5000;
     const tasks: Promise<SubtitleCandidate[]>[] = [];
-    if (sourcePref === 'all' || sourcePref === 'subhd') {
+    if (subhdWanted && !subhdOff) {
       tasks.push(withProviderTimeout(subhdProvider.search(queryMeta), 'subhd', providerTimeoutMs));
     }
     if (sourcePref === 'all' || sourcePref === 'no_subhd' || sourcePref === 'zimuku') {
@@ -341,7 +344,8 @@ export async function handleSubtitlesRequest(
       });
     }
 
-    if (subtitles.length > 0) {
+    const subhdBlockedDuringSearch = subhdWanted && !subhdOff && SubhdProvider.isRateLimited();
+    if (subtitles.length > 0 && !subhdBlockedDuringSearch) {
       cacheManager.setSearchResults(cacheKey, subtitles);
     }
 

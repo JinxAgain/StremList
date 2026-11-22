@@ -35,7 +35,8 @@
 - **Accurate Cloud Cache Badging**: Clearly marks cached cloud items with `[115⚡]` or `[PikPak⚡]` only when playable media files actually exist, while pending media tasks display `[115🧲]`.
 
 ### 3. 💬 Native Chinese Subtitle Ecosystem
-- **Multi-Source Subtitle Indexers**: Integrated search across **SubHD** and **Zimuku (字幕库)**.
+- **Multi-Source Subtitle Indexers**: Integrated search across **SubHD**, **Zimuku (字幕库)**, and **ASSRT (射手网)**.
+- **SubHD WeChat Gate & Graceful Fallback**: In the `/configure` Web UI under **SubHD 微信验证**, click to request a one-time 6-digit code and send it manually to the WeChat official account 「火星研究社」; the resulting session is saved locally in `data/subhd-session.json` for 30 days. If SubHD triggers Cloudflare Turnstile or hits the daily download limit, StremList automatically hides SubHD from search results (without polluting the normal 7-day search cache) and falls back to Zimuku / ASSRT.
 - **Smart Encoding Auto-Detection**: Uses `iconv-lite` to automatically detect and transcode diverse Chinese encodings (GBK, GB18030, Big5, UTF-8, UTF-16LE/BE) into clean UTF-8 VTT/SRT, eliminating subtitle mojibake and missing glyphs.
 - **Archive Extraction & File Matching**: Automatically unzips `.zip` and `.rar` subtitle packages via `adm-zip`, analyzing filename tokens to match the exact release and episode.
 - **Language Preference Priority**: Flexible sorting by Bilingual (双语), Simplified (简体中文), or Traditional (繁体中文).

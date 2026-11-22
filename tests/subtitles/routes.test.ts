@@ -1,11 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import request from 'supertest';
 import { createApp } from '../../src/app.js';
 import { cacheManager } from '../../src/services/subtitles/cache/manager.js';
 import { CinemetaClient } from '../../src/services/subtitles/core/cinemeta.js';
 import { AssrtProvider } from '../../src/services/subtitles/providers/assrt.js';
 import { SubhdProvider } from '../../src/services/subtitles/providers/subhd.js';
+import { subhdSession } from '../../src/services/subtitles/providers/subhd-session.js';
 import { ZimukuProvider } from '../../src/services/subtitles/providers/zimuku.js';
 import { parseMediaId } from '../../src/routes/subtitles.js';
 
@@ -485,6 +488,116 @@ Hello Converted SRT World
       for (const k of Array.from((cacheManager as any).searchCache.keys()) as string[]) {
         if (k.includes('tt6666666')) cacheManager.deleteSearchResult(k);
       }
+    }
+  });
+
+  it('POST /api/subhd/wechat/code, GET /status, POST /reset handle WeChat gate session', async () => {
+    const tmpSession = path.join(
+      os.tmpdir(),
+      `subhd-route-session-${process.pid}-${Math.random().toString(36).slice(2)}.json`
+    );
+    const origEnv = process.env.SUBHD_SESSION_FILE;
+    process.env.SUBHD_SESSION_FILE = tmpSession;
+    SubhdProvider.clearBlock();
+
+    const codeSpy = vi.spyOn(SubhdProvider.prototype, 'requestWechatCode').mockResolvedValueOnce({
+      code: '447797',
+      expiresAt: 1795341862000,
+      qrUrl: 'https://subhd.tv/public/images/wechat-qr.jpg',
+      domain: 'https://subhd.tv'
+    });
+    const statusSpy = vi.spyOn(SubhdProvider.prototype, 'checkWechatStatus').mockImplementation(async () => {
+      subhdSession.save({
+        wxg: 'mock_wxg',
+        domain: 'https://subhd.tv',
+        verified: true,
+        verifiedAt: 1795340000000,
+        expiresAt: 1797932000000
+      });
+      return { verified: true };
+    });
+
+    try {
+      const codeRes = await request(app).post('/api/subhd/wechat/code');
+      expect(codeRes.status).toBe(200);
+      expect(codeRes.body).toEqual({
+        success: true,
+        code: '447797',
+        expiresAt: 1795341862000,
+        qrUrl: 'https://subhd.tv/public/images/wechat-qr.jpg',
+        account: '火星研究社'
+      });
+      expect(codeSpy).toHaveBeenCalledTimes(1);
+
+      SubhdProvider.markBlocked('wechat_required', 3600, 'test');
+      const statusRes = await request(app).get('/api/subhd/wechat/status');
+      expect(statusRes.status).toBe(200);
+      expect(statusRes.body.verified).toBe(true);
+      expect(statusRes.body.verifiedAt).toBe(1795340000000);
+      expect(statusRes.body.expiresAt).toBe(1797932000000);
+      expect(statusRes.body.block.reason).toBe('wechat_required');
+      expect(statusSpy).toHaveBeenCalledTimes(1);
+
+      const resetRes = await request(app).post('/api/subhd/wechat/reset');
+      expect(resetRes.status).toBe(200);
+      expect(resetRes.body).toEqual({ success: true });
+      expect(subhdSession.load()).toBeNull();
+    } finally {
+      subhdSession.clear();
+      SubhdProvider.clearBlock();
+      if (origEnv === undefined) delete process.env.SUBHD_SESSION_FILE;
+      else process.env.SUBHD_SESSION_FILE = origEnv;
+    }
+  });
+
+  it('skips SubHD search and isolates results under :subhd_off cache key when SubHD is blocked', async () => {
+    const blockedCacheKey = 'movie:tt1122334:0:0:bilingual:all:8:subhd_off';
+    const normalCacheKey = 'movie:tt1122334:0:0:bilingual:all:8';
+    cacheManager.deleteSearchResult(blockedCacheKey);
+    cacheManager.deleteSearchResult(normalCacheKey);
+
+    SubhdProvider.markBlocked('turnstile_required', 3600, 'test');
+
+    vi.spyOn(CinemetaClient, 'resolveMediaInfo').mockResolvedValueOnce({
+      title: 'Fallback Only Movie',
+      year: 2025,
+      resolvedImdb: 'tt1122334'
+    });
+    const subhdSpy = vi.spyOn(SubhdProvider.prototype, 'search').mockResolvedValue([]);
+    const zimukuSpy = vi.spyOn(ZimukuProvider.prototype, 'search').mockResolvedValueOnce([
+      {
+        id: '334455',
+        provider: 'zimuku',
+        title: 'Fallback.Only.Movie.2025.1080p',
+        pageUrl: 'https://zmk.pw/detail/334455.html',
+        tags: {
+          provider: 'zimuku',
+          lang: ['chs'],
+          bilingual: true,
+          fmt: ['srt'],
+          source: [],
+          collection: false,
+          imdbMatched: true
+        },
+        rate: 5,
+        downloadsCount: 120,
+        score: 0
+      }
+    ]);
+
+    try {
+      const res = await request(app).get('/subtitles/movie/tt1122334.json');
+      expect(res.status).toBe(200);
+      expect(subhdSpy).not.toHaveBeenCalled();
+      expect(zimukuSpy).toHaveBeenCalledTimes(1);
+      expect(res.body.subtitles).toHaveLength(1);
+      expect(res.body.subtitles[0].id).toBe('zimuku_334455_0');
+      expect(cacheManager.getSearchResults(blockedCacheKey)).not.toBeNull();
+      expect(cacheManager.getSearchResults(normalCacheKey)).toBeNull();
+    } finally {
+      SubhdProvider.clearBlock();
+      cacheManager.deleteSearchResult(blockedCacheKey);
+      cacheManager.deleteSearchResult(normalCacheKey);
     }
   });
 });

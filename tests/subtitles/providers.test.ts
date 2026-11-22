@@ -1,6 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
+import { subhdSession } from '../../src/services/subtitles/providers/subhd-session.js';
 import {
   extractSeasonsFromText,
   extractSeasonAndBaseTitle,
@@ -994,6 +996,193 @@ describe('BaseProvider utilities', () => {
         (SubhdProvider as any).rateLimitedUntil = 0;
         (SubhdProvider as any).unhealthyDomains.clear();
       }
+    });
+  });
+
+  describe('SubhdProvider download & WeChat gate', () => {
+    let tempSessionFile = '';
+
+    const makeCand = (id = 'Cm0tsS'): SubtitleCandidate => ({
+      id,
+      provider: 'subhd',
+      title: 'Interstellar 2014',
+      pageUrl: `https://subhd.tv/a/${id}`,
+      tags: {
+        provider: 'subhd',
+        lang: ['chs'],
+        bilingual: true,
+        fmt: ['srt'],
+        source: [],
+        collection: false,
+        imdbMatched: true
+      },
+      rate: 5,
+      downloadsCount: 100,
+      score: 0
+    });
+
+    beforeEach(() => {
+      tempSessionFile = path.join(
+        os.tmpdir(),
+        `subhd-providers-test-${process.pid}-${Math.random().toString(36).slice(2)}.json`
+      );
+      process.env.SUBHD_SESSION_FILE = tempSessionFile;
+      SubhdProvider.clearBlock();
+    });
+
+    afterEach(() => {
+      subhdSession.clear();
+      SubhdProvider.clearBlock();
+      delete process.env.SUBHD_SESSION_FILE;
+      vi.restoreAllMocks();
+    });
+
+    it('proceeds past normal /down HTML with embedded gate strings, sends real timeZone and wxg cookie', async () => {
+      subhdSession.save({
+        wxg: 'verified_wxg_cookie_value',
+        domain: 'https://subhd.tv',
+        verified: true,
+        verifiedAt: Date.now(),
+        expiresAt: Date.now() + 86400 * 1000
+      });
+
+      const subhdInstance = new SubhdProvider();
+      const client = (subhdInstance as any).client;
+      const expectedTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+
+      const normalDownHtml = `
+        <html><body>
+          <div class="card download-card">
+            <div class="download-wechat" hidden>下载前请先在微信公众号验证</div>
+            <script>
+              const wechatConfig = { required: false };
+              const turnstileConfig = { required: false };
+              // https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit
+              fetch("/api/sub/down", { method: "POST" });
+            </script>
+          </div>
+        </body></html>
+      `;
+
+      const postSpy = vi
+        .spyOn(client, 'post')
+        .mockResolvedValueOnce({
+          status: 200,
+          headers: { 'set-cookie': ['tk_123=tkval; Path=/; HttpOnly'] },
+          data: { success: true, url: '/down/Cm0tsS' }
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          headers: {},
+          data: { success: true, pass: true, url: 'https://dl.subhd.tv/files/test.srt' }
+        });
+
+      const getSpy = vi
+        .spyOn(client, 'get')
+        .mockResolvedValueOnce({
+          status: 200,
+          headers: { 'set-cookie': ['down_123=downval; Path=/; HttpOnly'] },
+          data: normalDownHtml
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          headers: { 'content-disposition': 'attachment; filename="test.srt"' },
+          data: Buffer.from('1\n00:00:01,000 --> 00:00:03,000\nHello\n', 'utf-8')
+        });
+
+      const res = await subhdInstance.download(makeCand());
+      expect(res).not.toBeNull();
+      expect(res?.filename).toBe('test.srt');
+      expect(getSpy).toHaveBeenCalledTimes(2);
+      expect(postSpy).toHaveBeenCalledTimes(2);
+
+      const step3Call = postSpy.mock.calls[1];
+      expect(step3Call[0]).toBe('https://subhd.tv/api/sub/down');
+      expect(step3Call[1]).toEqual({
+        sid: 'Cm0tsS',
+        turnstileToken: '',
+        timeZone: expectedTimeZone
+      });
+      const step3Cookie = (step3Call[2] as any)?.headers?.Cookie || '';
+      expect(step3Cookie).toContain('wxg=verified_wxg_cookie_value');
+      expect(step3Cookie).toContain('tk_123=tkval');
+      expect(step3Cookie).toContain('down_123=downval');
+    });
+
+    it('records turnstile_required on 403 {turnstileRequired:true}', async () => {
+      const subhdInstance = new SubhdProvider();
+      const client = (subhdInstance as any).client;
+
+      vi.spyOn(client, 'post')
+        .mockResolvedValueOnce({ status: 200, headers: {}, data: { success: true, url: '/down/Cm0tsS' } })
+        .mockResolvedValueOnce({
+          status: 403,
+          headers: {},
+          data: { success: false, msg: '请先完成人机验证', pass: false, url: null, turnstileRequired: true }
+        });
+      vi.spyOn(client, 'get').mockResolvedValueOnce({
+        status: 200,
+        headers: {},
+        data: '<div class="card download-card"><script>fetch("/api/sub/down")</script></div>'
+      });
+
+      const res = await subhdInstance.download(makeCand());
+      expect(res).toBeNull();
+      expect(SubhdProvider.isRateLimited()).toBe(true);
+      expect(SubhdProvider.getBlockState().reason).toBe('turnstile_required');
+    });
+
+    it('marks session unverified and records wechat_required on 403 {wechatRequired:true}', async () => {
+      subhdSession.save({
+        wxg: 'stale_wxg',
+        domain: 'https://subhd.tv',
+        verified: true,
+        verifiedAt: Date.now(),
+        expiresAt: Date.now() + 86400 * 1000
+      });
+
+      const subhdInstance = new SubhdProvider();
+      const client = (subhdInstance as any).client;
+
+      vi.spyOn(client, 'post')
+        .mockResolvedValueOnce({ status: 200, headers: {}, data: { success: true, url: '/down/Cm0tsS' } })
+        .mockResolvedValueOnce({
+          status: 403,
+          headers: {},
+          data: { success: false, msg: '请先在公众号验证', pass: false, url: null, wechatRequired: true }
+        });
+      vi.spyOn(client, 'get').mockResolvedValueOnce({
+        status: 200,
+        headers: {},
+        data: '<div class="card download-card"><script>fetch("/api/sub/down")</script></div>'
+      });
+
+      const res = await subhdInstance.download(makeCand());
+      expect(res).toBeNull();
+      expect(SubhdProvider.getBlockState().reason).toBe('wechat_required');
+      expect(subhdSession.load()?.verified).toBe(false);
+    });
+
+    it('records daily_limit on 403 {dailyLimitReached:true}', async () => {
+      const subhdInstance = new SubhdProvider();
+      const client = (subhdInstance as any).client;
+
+      vi.spyOn(client, 'post')
+        .mockResolvedValueOnce({ status: 200, headers: {}, data: { success: true, url: '/down/Cm0tsS' } })
+        .mockResolvedValueOnce({
+          status: 403,
+          headers: {},
+          data: { success: false, msg: '今日下载次数已达上限', pass: false, url: null, dailyLimitReached: true }
+        });
+      vi.spyOn(client, 'get').mockResolvedValueOnce({
+        status: 200,
+        headers: {},
+        data: '<div class="card download-card"><script>fetch("/api/sub/down")</script></div>'
+      });
+
+      const res = await subhdInstance.download(makeCand());
+      expect(res).toBeNull();
+      expect(SubhdProvider.getBlockState().reason).toBe('daily_limit');
     });
   });
 });
