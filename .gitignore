@@ -25,11 +25,3 @@ openlist-background.vbs
 Thumbs.db
 .vscode/
 .idea/
-
-# Reference repositories
-AIOStreams/
-stremthru/
-harbor/
-comet/
-OpenList/
-stremio-addon-sdk/
