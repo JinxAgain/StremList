@@ -19,9 +19,15 @@ interface PlayableCandidateItem {
   file: FileItem;
 }
 
+interface InFlightEntry {
+  promise: Promise<string>;
+  subscribers: Set<symbol>;
+  abortUnderlying: (() => void) | null;
+}
+
 // Module-level caches shared across resolver instances
 const playUrlCache = new Map<string, CachedPlayUrl>();
-const inFlightResolutions = new Map<string, Promise<string>>();
+const inFlightResolutions = new Map<string, InFlightEntry>();
 const recentOfflineTasks = new Map<string, number>(); // infoHash -> timestamp
 
 export function clearPlayUrlCache(): void {
@@ -106,31 +112,79 @@ export class PlaybackResolver {
     // 1. Check in-memory URL cache (10 minutes TTL) to prevent hammering OpenList & PikPak
     const cachedEntry = playUrlCache.get(cacheKey);
     if (cachedEntry && cachedEntry.expiresAt > now) {
-      console.log(`[Resolver] ⚡ Returning cached play URL for ${infoHash} (expires in ${Math.round((cachedEntry.expiresAt - now) / 1000)}s)`);
+      console.log(
+        `[Resolver] ⚡ Returning cached play URL for ${infoHash} (expires in ${Math.round((cachedEntry.expiresAt - now) / 1000)}s)`
+      );
       return cachedEntry.url;
     }
 
-    // 2. Coalesce concurrent in-flight resolutions for the exact same target
-    const inFlight = inFlightResolutions.get(cacheKey);
-    if (inFlight) {
-      console.log(`[Resolver] ⏳ Attaching to in-flight resolution for ${infoHash}...`);
-      return await inFlight;
+    // 2. Coalesce concurrent in-flight resolutions with reference-counted abort
+    let entry = inFlightResolutions.get(cacheKey);
+    const subId = Symbol('play-subscriber');
+    let abortedByThisClient = false;
+
+    if (entry) {
+      console.log(
+        `[Resolver] ⏳ Attaching to in-flight resolution for ${infoHash} (active subscribers: ${entry.subscribers.size + 1})...`
+      );
+      entry.subscribers.add(subId);
+    } else {
+      const subscribers = new Set<symbol>([subId]);
+      let abortUnderlying: (() => void) | null = null;
+      const resolutionPromise = this.doResolvePlayUrl(infoHash, target, (fn) => {
+        abortUnderlying = fn;
+        if (entry) {
+          entry.abortUnderlying = fn;
+          if (entry.subscribers.size === 0) {
+            fn();
+          }
+        }
+      });
+      entry = {
+        promise: resolutionPromise,
+        subscribers,
+        abortUnderlying
+      };
+      inFlightResolutions.set(cacheKey, entry);
+
+      resolutionPromise
+        .then((resolvedUrl) => {
+          playUrlCache.set(cacheKey, {
+            url: resolvedUrl,
+            expiresAt: Date.now() + 10 * 60 * 1000
+          });
+        })
+        .catch(() => {})
+        .finally(() => {
+          inFlightResolutions.delete(cacheKey);
+        });
     }
 
-    // 3. Initiate resolution and cache result
-    const resolutionPromise = this.doResolvePlayUrl(infoHash, target, onAbort);
-    inFlightResolutions.set(cacheKey, resolutionPromise);
+    const currentEntry = entry;
+    const clientAbortPromise = new Promise<never>((_resolve, reject) => {
+      if (onAbort) {
+        onAbort(() => {
+          abortedByThisClient = true;
+          currentEntry.subscribers.delete(subId);
+          if (currentEntry.subscribers.size === 0) {
+            console.log(`[Resolver] 🛑 Last client disconnected, aborting resolution for ${infoHash}`);
+            currentEntry.abortUnderlying?.();
+          } else {
+            console.log(
+              `[Resolver] ℹ️ Secondary client disconnected for ${infoHash}; keeping resolution alive for ${currentEntry.subscribers.size} remaining subscriber(s)`
+            );
+          }
+          reject(new Error('CLIENT_ABORTED'));
+        });
+      }
+    });
 
     try {
-      const resolvedUrl = await resolutionPromise;
-      // Cache valid playback URL for 10 minutes
-      playUrlCache.set(cacheKey, {
-        url: resolvedUrl,
-        expiresAt: Date.now() + 10 * 60 * 1000
-      });
-      return resolvedUrl;
+      return await Promise.race([currentEntry.promise, clientAbortPromise]);
     } finally {
-      inFlightResolutions.delete(cacheKey);
+      if (!abortedByThisClient) {
+        currentEntry.subscribers.delete(subId);
+      }
     }
   }
 
@@ -187,14 +241,16 @@ export class PlaybackResolver {
 
     console.log(`[Resolver] 🔍 Checking cache for hash ${infoHash} across drives: [${candidateDrives.join(', ')}]...`);
 
+    const normHash = infoHash.toLowerCase().trim();
+
     // 1. Fast Cache Check: Check /<Drive>/StremList/<hash> for each mounted drive
     for (const drive of candidateDrives) {
       const drivePath = this.getDrivePath(drive, infoHash);
       // Quick check using local OpenList index first
       let cached = await this.findPlayableInPath(drivePath, target, false);
-      // If not found in local cache, force live refresh from cloud drive to discover newly completed files
-      // or incrementally downloaded series episodes before declaring a cache miss
-      if (!cached) {
+      // Only force live refresh on drivePath if the hash task was recently submitted
+      if (!cached && recentOfflineTasks.has(normHash)) {
+        await this.client.list(`/${drive}/StremList`, true).catch(() => {});
         cached = await this.findPlayableInPath(drivePath, target, true);
       }
 
@@ -208,17 +264,11 @@ export class PlaybackResolver {
       }
     }
 
-    // 2. Smart Title Cache Check in /<Drive>/StremList/ and /<Drive>/ across all drives
+    // 2. Smart Title Cache Check in /<Drive>/StremList/ (cached index only, skip slow root scan if missing)
     if (target.title) {
       for (const drive of candidateDrives) {
         const parentDir = `/${drive}/StremList`;
-        const rootDir = `/${drive}`;
-
-        let titleCached = await this.findPlayableByTitleInDir(parentDir, target, false);
-        if (!titleCached) {
-          titleCached = await this.findPlayableByTitleInDir(rootDir, target, false);
-        }
-
+        const titleCached = await this.findPlayableByTitleInDir(parentDir, target, false);
         if (titleCached) {
           console.log(`[Resolver] ⚡ Cache HIT in drive "${drive}" by title match! Found: ${titleCached.file.name}`);
           const rawUrl = await this.client.getRawUrl(titleCached.fullPath);
@@ -234,13 +284,11 @@ export class PlaybackResolver {
     const targetDrive = primaryDrive;
     const targetPath = this.getDrivePath(targetDrive, infoHash);
     const parentPrimary = `/${targetDrive}/StremList`;
-    const rootDrive = `/${targetDrive}`;
 
     console.log(`[Resolver] ⏳ Cache MISS across all drives. Starting offline download on DEFAULT_DRIVE "${targetDrive}"...`);
     // Ensure parent /StremList directory exists
     await this.client.mkdir(parentPrimary).catch(() => {});
 
-    const normHash = infoHash.toLowerCase().trim();
     const lastSubmitted = recentOfflineTasks.get(normHash);
     const nowTs = Date.now();
     const RECENT_TASK_TTL_MS = 15 * 60 * 1000; // 15 minutes deduplication window
@@ -268,10 +316,11 @@ export class PlaybackResolver {
     }
 
     // 5. Synchronous Polling Loop with Abort Detection & Timeout
-    const timeoutMs = (this.config.pollTimeout || 25) * 1000;
+    const timeoutMs = (this.config.pollTimeout || 40) * 1000;
     const intervalMs = this.config.pollInterval || 1500;
     const startTime = Date.now();
     let pollAttempts = 0;
+    let hashDirSeenInParent = false;
 
     return new Promise<string>((resolve, reject) => {
       let isAborted = false;
@@ -281,7 +330,6 @@ export class PlaybackResolver {
         onAbort(() => {
           isAborted = true;
           if (timer) clearTimeout(timer);
-          console.log(`[Resolver] 🛑 Client disconnected/aborted playback for ${infoHash}`);
           reject(new Error('CLIENT_ABORTED'));
         });
       }
@@ -300,15 +348,29 @@ export class PlaybackResolver {
         console.log(`[Resolver] 🔄 Polling ${targetPath} (attempt #${pollAttempts}, elapsed ${elapsedSec}s)...`);
 
         try {
-          let readyFile = await this.findPlayableInPath(targetPath, target, true);
-          if (!readyFile && target.title) {
-            readyFile = await this.findPlayableByTitleInDir(parentPrimary, target, true);
+          // CRITICAL: Refresh parent /<Drive>/StremList first until OpenList's VFS cache
+          // sees the newly created <infoHash> directory from PikPak/115.
+          if (!hashDirSeenInParent) {
+            const parentListing = await this.client.list(parentPrimary, true).catch(() => ({ content: [] }));
+            hashDirSeenInParent = (parentListing.content || []).some(
+              (item) => item.is_dir && item.name.toLowerCase().trim() === normHash
+            );
           }
-          if (!readyFile && target.title) {
-            readyFile = await this.findPlayableByTitleInDir(rootDrive, target, true);
+
+          // Now force-refresh the target hash directory (and its nested folders)
+          let readyFile = await this.findPlayableInPath(targetPath, target, true);
+
+          // If targetPath is still empty on every 3rd attempt, re-refresh parentPrimary in case
+          // the cloud drive recreated the folder or dropped the file directly in parentPrimary
+          if (!readyFile && pollAttempts % 3 === 0) {
+            hashDirSeenInParent = false;
+            if (target.title) {
+              readyFile = await this.findPlayableByTitleInDir(parentPrimary, target, true);
+            }
           }
 
           if (readyFile) {
+            this.client.markHashCached?.(infoHash);
             console.log(
               `[Resolver] 🎉 File ready! "${readyFile.file.name}" (${(readyFile.file.size / (1024 * 1024 * 1024)).toFixed(2)} GB)`
             );

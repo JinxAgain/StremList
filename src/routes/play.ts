@@ -100,14 +100,17 @@ export async function handlePlay(req: Request, res: Response) {
     console.log(`[Play] 🚀 Issuing 302 Redirect to stream: ${playUrl}`);
     return res.redirect(302, playUrl);
   } catch (error: any) {
+    if (error.message === 'CLIENT_ABORTED' && (req.destroyed || res.writableEnded)) {
+      return;
+    }
     console.error(`[Play] ❌ Playback failed for ${infoHash}: ${error.message}`);
+    if (res.headersSent || res.writableEnded) {
+      return;
+    }
     if (error.message === 'OFFLINE_DOWNLOAD_TIMEOUT') {
       return res.status(504).send(
-        'Offline download timed out (25s). The task has been queued in your cloud drive. Please retry in a few moments.'
+        'Offline download timed out. The task has been queued in your cloud drive. Please retry in a few moments.'
       );
-    }
-    if (error.message === 'CLIENT_ABORTED') {
-      return;
     }
     return res.status(502).send(`Error resolving playback stream: ${error.message}`);
   }

@@ -102,33 +102,40 @@ export class ScraperAggregator {
 
     let uniqueStreams = Array.from(streamMap.values());
 
-    // Check OpenList cache across ALL mounted drives
+    // Check OpenList cache across ALL mounted drives with a 3.5s fast-fallback timeout
+    // so slow OpenList directory refreshes never stall stream discovery for 10+ seconds
     let cachedHashes = new Set<string>();
+    const verifiedHashes = new Set<string>();
     if (this.openlistClient) {
+      let timeoutId: NodeJS.Timeout | null = null;
       try {
-        cachedHashes = await this.openlistClient.getAllCachedHashes();
+        const checkCachePromise = (async () => {
+          cachedHashes = await this.openlistClient!.getAllCachedHashes();
+          const matchingStreams = uniqueStreams.filter((s) => cachedHashes.has(s.infoHash));
+          if (matchingStreams.length > 0) {
+            await Promise.allSettled(
+              matchingStreams.map(async (s) => {
+                if (typeof this.openlistClient!.hasCachedContent === 'function') {
+                  const hasContent = await this.openlistClient!.hasCachedContent(s.infoHash);
+                  if (hasContent) verifiedHashes.add(s.infoHash);
+                } else {
+                  verifiedHashes.add(s.infoHash);
+                }
+              })
+            );
+          }
+        })();
+        await Promise.race([
+          checkCachePromise,
+          new Promise<void>((resolve) => {
+            timeoutId = setTimeout(resolve, 3500);
+          })
+        ]);
       } catch {
         // Fallback gracefully if OpenList is unreachable
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
       }
-    }
-
-    // Assign isCached flag: verify candidate matching streams actually have content (not empty folders)
-    const matchingStreams = uniqueStreams.filter((s) => cachedHashes.has(s.infoHash));
-    const verifiedHashes = new Set<string>();
-
-    if (this.openlistClient && matchingStreams.length > 0) {
-      await Promise.allSettled(
-        matchingStreams.map(async (s) => {
-          if (typeof this.openlistClient!.hasCachedContent === 'function') {
-            const hasContent = await this.openlistClient!.hasCachedContent(s.infoHash);
-            if (hasContent) {
-              verifiedHashes.add(s.infoHash);
-            }
-          } else {
-            verifiedHashes.add(s.infoHash);
-          }
-        })
-      );
     }
 
     uniqueStreams = uniqueStreams.map((s) => ({

@@ -235,33 +235,145 @@ describe('OpenList Client & Playback Resolver', () => {
     expect(getRawSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('falls back to live refresh before declaring cache miss to prevent duplicate offline downloads', async () => {
+  it('falls back to live refresh when a recent offline task exists to prevent duplicate offline downloads', async () => {
     const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
     vi.spyOn(client, 'getMountedDrives').mockResolvedValue(['115']);
 
-    let callCount = 0;
-    vi.spyOn(client, 'list').mockImplementation(async (path: string, refresh?: boolean) => {
-      callCount++;
-      // First call (refresh: false) returns empty (stale cache)
-      if (!refresh) {
+    let fileReadyInCloud = false;
+    vi.spyOn(client, 'list').mockImplementation(async (_path: string, refresh?: boolean) => {
+      if (!fileReadyInCloud || !refresh) {
         return { content: [] };
       }
-      // Second call (refresh: true) returns newly arrived file
       return {
         content: [{ name: 'Below.S01E03.2160p.mkv', size: 5 * 1024 * 1024 * 1024, is_dir: false }]
       };
     });
 
-    const addOfflineSpy = vi.spyOn(client, 'addOfflineDownload');
+    const addOfflineSpy = vi.spyOn(client, 'addOfflineDownload').mockResolvedValue(true);
     vi.spyOn(client, 'getRawUrl').mockResolvedValue('https://115.com/direct/below_e03.mkv');
 
-    const resolver = new PlaybackResolver(client, mockConfig);
-    const url = await resolver.resolvePlayUrl('belowhash123', { type: 'series', season: 1, episode: 3 });
+    const fastResolver = new PlaybackResolver(client, {
+      ...mockConfig,
+      pollTimeout: 0.15,
+      pollInterval: 50
+    });
+
+    // 1st attempt: submits offline download and times out before file is ready
+    await expect(
+      fastResolver.resolvePlayUrl('belowhash123', { type: 'series', season: 1, episode: 3 })
+    ).rejects.toThrow('OFFLINE_DOWNLOAD_TIMEOUT');
+    expect(addOfflineSpy).toHaveBeenCalledTimes(1);
+
+    // Cloud completes download right after; 2nd request should force refresh parent + targetPath and hit cache immediately
+    fileReadyInCloud = true;
+    const url = await fastResolver.resolvePlayUrl('belowhash123', { type: 'series', season: 1, episode: 3 });
 
     expect(url).toBe('https://115.com/direct/below_e03.mkv');
-    // Crucially: no duplicate offline download task was submitted to cloud drive!
-    expect(addOfflineSpy).not.toHaveBeenCalled();
-    expect(callCount).toBeGreaterThanOrEqual(2);
+    expect(addOfflineSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps in-flight polling alive for remaining subscribers when the first subscriber disconnects', async () => {
+    const client = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
+    vi.spyOn(client, 'getMountedDrives').mockResolvedValue(['PikPak']);
+    vi.spyOn(client, 'addOfflineDownload').mockResolvedValue(true);
+    vi.spyOn(client, 'getRawUrl').mockResolvedValue('https://pikpak.me/direct/episode4.mkv');
+
+    let hashFolderVisible = false;
+    const listedPaths: Array<{ path: string; refresh: boolean }> = [];
+    vi.spyOn(client, 'list').mockImplementation(async (path: string, refresh = false) => {
+      listedPaths.push({ path, refresh });
+      if (path === '/PikPak/StremList' && refresh) {
+        hashFolderVisible = true;
+        return {
+          content: [{ name: '88513d3f9b08044cc1269cbce9a97f42fae4dd1d', size: 0, is_dir: true }]
+        };
+      }
+      if (
+        path === '/PikPak/StremList/88513d3f9b08044cc1269cbce9a97f42fae4dd1d' &&
+        refresh &&
+        hashFolderVisible &&
+        listedPaths.filter((p) => p.path === path && p.refresh).length >= 2
+      ) {
+        return {
+          content: [{ name: 'Show.S02E04.1080p.mkv', size: 2 * 1024 * 1024 * 1024, is_dir: false }]
+        };
+      }
+      return { content: [] };
+    });
+
+    const resolver = new PlaybackResolver(client, {
+      ...mockConfig,
+      defaultDrive: 'pikpak',
+      pollTimeout: 3,
+      pollInterval: 80
+    });
+
+    let abortProbeClient: (() => void) | undefined;
+    const probePromise = resolver.resolvePlayUrl(
+      '88513d3f9b08044cc1269cbce9a97f42fae4dd1d',
+      { type: 'series', season: 2, episode: 4 },
+      (fn) => {
+        abortProbeClient = fn;
+      }
+    );
+
+    let abortMpvClient: (() => void) | undefined;
+    const mpvPromise = resolver.resolvePlayUrl(
+      '88513d3f9b08044cc1269cbce9a97f42fae4dd1d',
+      { type: 'series', season: 2, episode: 4 },
+      (fn) => {
+        abortMpvClient = fn;
+      }
+    );
+
+    // Disconnect probe client #1 after 90ms (during first poll)
+    setTimeout(() => {
+      abortProbeClient?.();
+    }, 90);
+
+    await expect(probePromise).rejects.toThrow('CLIENT_ABORTED');
+    const mpvUrl = await mpvPromise;
+    expect(mpvUrl).toBe('https://pikpak.me/direct/episode4.mkv');
+    expect(abortMpvClient).toBeDefined();
+
+    // Verify parent /PikPak/StremList was refreshed before target hash folder succeeded
+    const firstParentRefreshIdx = listedPaths.findIndex(
+      (p) => p.path === '/PikPak/StremList' && p.refresh === true
+    );
+    expect(firstParentRefreshIdx).toBeGreaterThanOrEqual(0);
+  });
+
+  it('shares static mountedDrivesCache and cachedHashesCache across OpenListClient instances and updates via markHashCached', async () => {
+    const client1 = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
+    const client2 = new OpenListClient('http://127.0.0.1:5244', 'mock-token');
+
+    const hashA = '1111111111111111111111111111111111111111';
+    const hashB = '2222222222222222222222222222222222222222';
+
+    const listSpy1 = vi.spyOn(client1, 'list').mockImplementation(async (path: string) => {
+      if (path === '/') {
+        return { content: [{ name: 'PikPak', size: 0, is_dir: true }] };
+      }
+      if (path === '/PikPak/StremList') {
+        return { content: [{ name: hashA, size: 0, is_dir: true }] };
+      }
+      return { content: [] };
+    });
+    const listSpy2 = vi.spyOn(client2, 'list');
+
+    const hashes1 = await client1.getAllCachedHashes();
+    expect(hashes1.has(hashA)).toBe(true);
+    expect(listSpy1).toHaveBeenCalled();
+
+    // Second instance should hit static cache without calling list()
+    const hashes2 = await client2.getAllCachedHashes();
+    expect(hashes2.has(hashA)).toBe(true);
+    expect(listSpy2).not.toHaveBeenCalled();
+
+    // markHashCached on client2 should immediately reflect in static cache
+    client2.markHashCached(hashB);
+    const hashes3 = await client1.getAllCachedHashes();
+    expect(hashes3.has(hashB)).toBe(true);
   });
 
   it('skips duplicate addOfflineDownload if called again for the same infoHash within recent window', async () => {

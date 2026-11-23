@@ -176,4 +176,42 @@ describe('Scraper Aggregator Service', () => {
     expect(streams[0].name).toContain('[115🧲]');
     expect(streams[0].name).not.toContain('⚡');
   });
+
+  it('times out slow OpenList cache checks after 3.5s so stream discovery never hangs', async () => {
+    vi.useFakeTimers();
+    try {
+      const slowHash = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+      const mockOpenListClient = {
+        getAllCachedHashes: vi.fn().mockImplementation(
+          () => new Promise((resolve) => setTimeout(() => resolve(new Set([slowHash])), 10000))
+        )
+      } as any;
+
+      const aggregator = new ScraperAggregator(
+        'https://torrentio.strem.fun',
+        'https://comet.test',
+        mockOpenListClient,
+        'pikpak'
+      );
+
+      vi.spyOn(TorrentioScraper.prototype, 'fetchStreams').mockResolvedValue([
+        {
+          infoHash: slowHash,
+          name: 'Torrentio 1080p',
+          title: 'Fast Fallback Stream 1080p',
+          fileIdx: 0
+        }
+      ]);
+      vi.spyOn(CometScraper.prototype, 'fetchStreams').mockResolvedValue([]);
+
+      const fetchPromise = aggregator.fetchStreams('movie', 'tt1234567', 'http://127.0.0.1:7000');
+      await vi.advanceTimersByTimeAsync(3600);
+      const streams = await fetchPromise;
+
+      expect(streams).toHaveLength(1);
+      expect(streams[0].name).toContain('[PikPak🧲]');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

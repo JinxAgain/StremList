@@ -24,9 +24,9 @@ export function getToolCandidates(drive: string): string[] {
 
 export class OpenListClient {
   private http: AxiosInstance;
-  private proxyChecked = false;
-  private mountedDrivesCache: { drives: string[]; expiresAt: number } | null = null;
-  private cachedHashesCache: { hashes: Set<string>; expiresAt: number } | null = null;
+  private static proxyChecked = false;
+  private static mountedDrivesCache: { drives: string[]; expiresAt: number } | null = null;
+  private static cachedHashesCache: { hashes: Set<string>; expiresAt: number } | null = null;
 
   constructor(private baseUrl: string, private token: string) {
     const cleanBase = baseUrl.replace(/\/+$/, '');
@@ -42,8 +42,8 @@ export class OpenListClient {
 
   async getMountedDrives(forceRefresh = false): Promise<string[]> {
     const now = Date.now();
-    if (!forceRefresh && this.mountedDrivesCache && this.mountedDrivesCache.expiresAt > now) {
-      return this.mountedDrivesCache.drives;
+    if (!forceRefresh && OpenListClient.mountedDrivesCache && OpenListClient.mountedDrivesCache.expiresAt > now) {
+      return OpenListClient.mountedDrivesCache.drives;
     }
 
     const drives: string[] = [];
@@ -86,14 +86,14 @@ export class OpenListClient {
       drives.push(envDrive);
     }
 
-    this.mountedDrivesCache = { drives, expiresAt: now + 30000 };
+    OpenListClient.mountedDrivesCache = { drives, expiresAt: now + 30000 };
     return drives;
   }
 
   async getAllCachedHashes(forceRefresh = false): Promise<Set<string>> {
     const now = Date.now();
-    if (!forceRefresh && this.cachedHashesCache && this.cachedHashesCache.expiresAt > now) {
-      return this.cachedHashesCache.hashes;
+    if (!forceRefresh && OpenListClient.cachedHashesCache && OpenListClient.cachedHashesCache.expiresAt > now) {
+      return OpenListClient.cachedHashesCache.hashes;
     }
 
     const hashes = new Set<string>();
@@ -118,7 +118,7 @@ export class OpenListClient {
       })
     );
 
-    this.cachedHashesCache = { hashes, expiresAt: now + 20000 };
+    OpenListClient.cachedHashesCache = { hashes, expiresAt: now + 20000 };
     return hashes;
   }
 
@@ -256,8 +256,15 @@ export class OpenListClient {
 
   evictCachedHash(infoHash: string): void {
     const lower = infoHash.toLowerCase().trim();
-    if (this.cachedHashesCache) {
-      this.cachedHashesCache.hashes.delete(lower);
+    if (OpenListClient.cachedHashesCache) {
+      OpenListClient.cachedHashesCache.hashes.delete(lower);
+    }
+  }
+
+  markHashCached(infoHash: string): void {
+    const lower = infoHash.toLowerCase().trim();
+    if (OpenListClient.cachedHashesCache) {
+      OpenListClient.cachedHashesCache.hashes.add(lower);
     }
   }
 
@@ -296,7 +303,7 @@ export class OpenListClient {
   }
 
   async ensure115WebProxy(): Promise<boolean> {
-    if (this.proxyChecked) return true;
+    if (OpenListClient.proxyChecked) return true;
     try {
       const listRes = await this.http.get('/api/admin/storage/list');
       if (listRes.data?.code === 200 && Array.isArray(listRes.data.data?.content)) {
@@ -356,7 +363,7 @@ export class OpenListClient {
           }
         }
         if (anyUpdated) {
-          this.proxyChecked = true;
+          OpenListClient.proxyChecked = true;
           return true;
         }
       }
@@ -370,6 +377,9 @@ export class OpenListClient {
 
   static clearRawUrlCache(): void {
     OpenListClient.rawUrlCache.clear();
+    OpenListClient.mountedDrivesCache = null;
+    OpenListClient.cachedHashesCache = null;
+    OpenListClient.proxyChecked = false;
   }
 
   async getRawUrl(path: string): Promise<string | null> {
