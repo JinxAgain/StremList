@@ -10,7 +10,12 @@ import {
   extractSeasonsFromText,
   extractSeasonAndBaseTitle
 } from './base.js';
-import { SubtitleExtractor, SUBTITLE_EXTENSIONS, ARCHIVE_EXTENSIONS } from '../core/extractor.js';
+import {
+  SubtitleExtractor,
+  SUBTITLE_EXTENSIONS,
+  ARCHIVE_EXTENSIONS,
+  BILINGUAL_REGEX
+} from '../core/extractor.js';
 import {
   AssrtFileListItem,
   AssrtSubItem,
@@ -861,6 +866,26 @@ export class AssrtProvider extends BaseProvider {
       const detail: AssrtSubItem | undefined = detailList[0];
       if (!detail) return null;
 
+      const detailTags = {
+        lang: [] as string[],
+        bilingual: Boolean(candidate.tags.bilingual || options?.siteBilingual)
+      };
+      if (detail.lang?.langlist?.langdou) {
+        detailTags.bilingual = true;
+      }
+      parseLangAndBilingualFromText(
+        [
+          detail.lang?.desc || '',
+          detail.native_name || '',
+          this.cleanVideoName(detail.videoname),
+          detail.filename || ''
+        ].join(' '),
+        detailTags
+      );
+      if (detailTags.bilingual) {
+        candidate.tags.bilingual = true;
+      }
+
       // Priority 1: Direct onthefly single-file download from filelist
       const detailFiles = this.normalizeFileList(detail.filelist);
       if (detailFiles.length > 0) {
@@ -877,21 +902,35 @@ export class AssrtProvider extends BaseProvider {
         );
 
         if (seasonFilteredNames.length > 0) {
-          const pickedName = SubtitleExtractor.pickBestFile(
-            seasonFilteredNames,
-            options?.episode,
-            options?.preferBilingual ?? true,
-            options?.preferTraditional ?? false,
-            options?.preferAss ?? false
-          );
+          const preferBi = options?.preferBilingual ?? true;
+          const preferTrad = options?.preferTraditional ?? false;
+          const preferAss = options?.preferAss ?? false;
+          const hasExplicitBiInFiles = seasonFilteredNames.some((n) => BILINGUAL_REGEX.test(n.toLowerCase()));
+          const needsContentVerify =
+            detailTags.bilingual && preferBi && !hasExplicitBiInFiles && seasonFilteredNames.length > 1;
 
-          const targetItem = pickedName
-            ? validFiles.find((v) => v.f === pickedName)
-            : options?.episode === undefined
-              ? validFiles.find((v) => v.f === seasonFilteredNames[0])
-              : undefined;
+          const remainingNames = [...seasonFilteredNames];
+          const fetchedBuffers: Record<string, Buffer> = {};
+          const maxAttempts = needsContentVerify ? Math.min(remainingNames.length, 3) : 1;
 
-          if (targetItem?.url) {
+          for (let attempt = 0; attempt < maxAttempts && remainingNames.length > 0; attempt++) {
+            const pickedName = SubtitleExtractor.pickBestFile(
+              remainingNames,
+              options?.episode,
+              preferBi,
+              preferTrad,
+              preferAss,
+              detailTags.bilingual
+            );
+
+            const targetItem = pickedName
+              ? validFiles.find((v) => v.f === pickedName)
+              : options?.episode === undefined
+                ? validFiles.find((v) => v.f === remainingNames[0])
+                : undefined;
+
+            if (!targetItem?.url) break;
+
             try {
               const fileResp = await this.client.get(targetItem.url, {
                 responseType: 'arraybuffer',
@@ -902,11 +941,63 @@ export class AssrtProvider extends BaseProvider {
                 const buf = Buffer.from(fileResp.data);
                 const contentType = String(fileResp.headers?.['content-type'] || '');
                 if (buf.length >= 30 && !this.isLikelyErrorPayload(buf, contentType)) {
-                  return { buffer: buf, filename: targetItem.f };
+                  if (!needsContentVerify) {
+                    return { buffer: buf, filename: targetItem.f };
+                  }
+
+                  fetchedBuffers[targetItem.f] = buf;
+                  const inspection = SubtitleExtractor.inspectSubtitleContent(buf);
+                  if (inspection.isBilingualContent) {
+                    return { buffer: buf, filename: targetItem.f };
+                  }
+
+                  // Remove non-bilingual candidate and try next candidate in filelist
+                  const idx = remainingNames.indexOf(targetItem.f);
+                  if (idx !== -1) remainingNames.splice(idx, 1);
+                  continue;
                 }
               }
             } catch (fileErr: any) {
               console.warn(`[ASSRT] On-the-fly file download failed for ${targetItem.f}:`, fileErr.message);
+            }
+            break;
+          }
+
+          // If none of the inspected filelist entries had bilingual dialogue, pick the best verified Chinese one among fetched or remaining
+          if (Object.keys(fetchedBuffers).length > 0) {
+            const allCandidateNames = seasonFilteredNames;
+            const bestVerifiedName = SubtitleExtractor.pickBestFile(
+              allCandidateNames,
+              options?.episode,
+              preferBi,
+              preferTrad,
+              preferAss,
+              detailTags.bilingual,
+              fetchedBuffers
+            );
+            if (bestVerifiedName) {
+              if (fetchedBuffers[bestVerifiedName]) {
+                return { buffer: fetchedBuffers[bestVerifiedName], filename: bestVerifiedName };
+              }
+              const fallbackItem = validFiles.find((v) => v.f === bestVerifiedName);
+              if (fallbackItem?.url) {
+                try {
+                  const fileResp = await this.client.get(fallbackItem.url, {
+                    responseType: 'arraybuffer',
+                    timeout: 20000,
+                    validateStatus: () => true
+                  });
+                  if (fileResp.status === 200 && fileResp.data) {
+                    const buf = Buffer.from(fileResp.data);
+                    const contentType = String(fileResp.headers?.['content-type'] || '');
+                    if (buf.length >= 30 && !this.isLikelyErrorPayload(buf, contentType)) {
+                      return { buffer: buf, filename: fallbackItem.f };
+                    }
+                  }
+                } catch (fileErr: any) {
+                  console.warn(`[ASSRT] Fallback file download failed for ${fallbackItem.f}:`, fileErr.message);
+                }
+              }
             }
           }
         }

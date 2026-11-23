@@ -73,6 +73,7 @@ export interface DownloadOptions {
   preferBilingual?: boolean;
   preferTraditional?: boolean;
   preferAss?: boolean;
+  siteBilingual?: boolean;
 }
 
 export interface AssrtFileListItem {

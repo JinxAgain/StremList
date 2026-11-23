@@ -517,6 +517,18 @@ export class ZimukuProvider extends BaseProvider {
       if (!resp) continue;
 
       const $ = cheerio.load(resp.data.toString());
+      if (!candidate.tags.bilingual) {
+        $('ul.subinfo img, div.subinfo img, td.tac.lang img').each((_, img) => {
+          const alt = `${$(img).attr('alt') || ''} ${$(img).attr('title') || ''} ${$(img).attr('data-original-title') || ''}`.trim();
+          if (alt.includes('双语') || alt.includes('雙語')) {
+            candidate.tags.bilingual = true;
+          }
+        });
+        const h1Title = $('div.subs h1, h1').first().text().trim();
+        if (h1Title.includes('双语') || h1Title.includes('雙語')) {
+          candidate.tags.bilingual = true;
+        }
+      }
       const dlSub = $('li.dlsub a').first();
       if (!dlSub.length || !dlSub.attr('href')) continue;
 

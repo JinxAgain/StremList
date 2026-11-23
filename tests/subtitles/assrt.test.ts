@@ -756,6 +756,61 @@ describe('AssrtProvider', () => {
       expect(dl2).toBeNull();
       expect(spy2).toHaveBeenCalledTimes(2);
       expect(AssrtProvider.isDomainHealthy('https://api.assrt.net')).toBe(true);
+      spy2.mockRestore();
+
+      // Case 3: onthefly content verification rejects untagged English-only .srt and selects verified bilingual .ass
+      const engOnlySrt = Buffer.from(
+        '1\n00:00:01,000 --> 00:00:03,000\nHello Michael.\n\n2\n00:00:04,000 --> 00:00:06,000\nGood morning.\n',
+        'utf-8'
+      );
+      const biAss = Buffer.from(
+        [
+          '[Script Info]',
+          'ScriptType: v4.00+',
+          '[Events]',
+          'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+          'Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,你好迈克尔\\NHello Michael.',
+          'Dialogue: 0,0:00:04.00,0:00:06.00,Default,,0,0,0,,早上好\\NGood morning.',
+          'Dialogue: 0,0:00:07.00,0:00:09.00,Default,,0,0,0,,回头见\\NSee you later.'
+        ].join('\n'),
+        'utf-8'
+      );
+      const spy3 = vi
+        .spyOn((provider as any).client, 'get')
+        .mockResolvedValueOnce({
+          status: 200,
+          data: {
+            status: 0,
+            sub: {
+              subs: [
+                {
+                  id: 604999,
+                  lang: { langlist: { langdou: true }, desc: '双语' },
+                  filelist: [
+                    { f: 'Sample.Show.S02E03.srt', url: 'https://file0.assrt.net/onthefly/604999/-/1/s2e3.srt' },
+                    { f: 'Sample.Show.S02E03.ass', url: 'https://file0.assrt.net/onthefly/604999/-/2/s2e3.ass' },
+                    { f: 'Sample.Show.S02E03.chs.srt', url: 'https://file0.assrt.net/onthefly/604999/-/3/s2e3.chs.srt' }
+                  ]
+                }
+              ]
+            }
+          }
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          headers: { 'content-type': 'text/plain' },
+          data: engOnlySrt
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          headers: { 'content-type': 'text/plain' },
+          data: biAss
+        });
+
+      const dl3 = await provider.download(cand, { episode: 3, season: 2, preferBilingual: true, preferAss: false });
+      expect(dl3?.filename).toBe('Sample.Show.S02E03.ass');
+      expect(dl3?.buffer.toString('utf-8')).toContain('你好迈克尔');
+      spy3.mockRestore();
     });
 
     it('prioritizes onthefly filelist direct download and falls back to full archive url', async () => {

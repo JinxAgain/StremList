@@ -600,5 +600,53 @@ Hello Converted SRT World
       cacheManager.deleteSearchResult(normalCacheKey);
     }
   });
+
+  it('selects content-verified untagged bilingual .ass from Zimuku archive when marked bilingual', async () => {
+    const AdmZip = (await import('adm-zip')).default;
+    const zip = new AdmZip();
+    const chsAss = [
+      '[Script Info]',
+      'Title: Bilingual subtitle file',
+      '[Events]',
+      'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+      'Dialogue: 0,0:01:11.24,0:01:12.32,Default,,0,0,0,,你好，迈克尔。',
+      'Dialogue: 0,0:01:19.28,0:01:21.68,Default,,0,0,0,,早……早啊。',
+      'Dialogue: 0,0:01:23.00,0:01:25.60,Default,,0,0,0,,好吧，那我回头处理。'
+    ].join('\n');
+    const bilingualAss = [
+      '[Script Info]',
+      'Title: Bilingual subtitle file',
+      '[Events]',
+      'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+      'Dialogue: 0,0:01:11.24,0:01:12.32,Default,,0,0,0,,你好，迈克尔。\\N{\\rMerged}Hello, Michael.',
+      'Dialogue: 0,0:01:19.28,0:01:21.68,Default,,0,0,0,,早……早啊。\\N{\\rMerged}Morning... morning.',
+      'Dialogue: 0,0:01:23.00,0:01:25.60,Default,,0,0,0,,好吧，那我回头处理。\\N{\\rMerged}All right, I will sort it out.'
+    ].join('\n');
+
+    zip.addFile('Small.Prophets.S01E01.1080p.WEBRip.x265-KONTRAST.chs.ass', Buffer.from(chsAss, 'utf-8'));
+    zip.addFile('Small.Prophets.S01E01.1080p.WEBRip.x265-KONTRAST.ass', Buffer.from(bilingualAss, 'utf-8'));
+
+    const cacheFile = cacheManager.getSubtitlePath('zimuku_22798800_1_orig.ass');
+    if (fs.existsSync(cacheFile)) fs.unlinkSync(cacheFile);
+
+    const dlSpy = vi.spyOn(ZimukuProvider.prototype, 'download').mockResolvedValueOnce({
+      buffer: zip.toBuffer(),
+      filename: '[zmk.pw]Small.Prophets.S01.1080p.WEBRip.x265-KONTRAST@horan.v2.zip'
+    });
+
+    try {
+      const encodedName = encodeURIComponent('Small.Prophets.S01E01.1080p.WEBRip.x265.[Bilingual.Zimuku].ass');
+      const res = await request(app).get(
+        `/subtitles/dl/zimuku/22798800/1/subtitle.ass?name=${encodedName}&raw=1&s=1&bi=1`
+      );
+      expect(res.status).toBe(200);
+      expect(res.text).toContain('Hello, Michael.');
+      expect(res.text).toContain('你好，迈克尔。');
+      expect(dlSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      dlSpy.mockRestore();
+      if (fs.existsSync(cacheFile)) fs.unlinkSync(cacheFile);
+    }
+  });
 });
 

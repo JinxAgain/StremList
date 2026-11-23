@@ -327,8 +327,9 @@ export async function handleSubtitlesRequest(
       const ext = format || (keepOriginalFormat ? 'ass' : 'srt');
       const rawParam = keepOriginalFormat ? '&raw=1' : '';
       const seasonParam = queryMeta.season !== undefined ? `&s=${queryMeta.season}` : '';
+      const biParam = cand.tags.bilingual ? '&bi=1' : '';
       const encodedFilename = encodeURIComponent(filename);
-      const relPath = `/subtitles/dl/${cand.provider}/${cand.id}/${epNum}/subtitle.${ext}?name=${encodedFilename}${rawParam}${seasonParam}`;
+      const relPath = `/subtitles/dl/${cand.provider}/${cand.id}/${epNum}/subtitle.${ext}?name=${encodedFilename}${rawParam}${seasonParam}${biParam}`;
 
       subtitles.push({
         id: `${cand.provider}_${cand.id}_${epNum}`,
@@ -382,6 +383,9 @@ export async function handleDownloadSubtitle(req: Request, res: Response) {
     : `${provider}_${subId}${seasonPart}_${episodeNum}.srt`;
 
   const downloadName = (req.query.name as string) || filename;
+  const siteBilingual =
+    req.query.bi === '1' ||
+    /\[双\]|\[Bilingual\./i.test(downloadName);
 
   // 1. Fast path: disk cache hit
   if (cacheManager.hasSubtitle(cacheFilename)) {
@@ -429,7 +433,7 @@ export async function handleDownloadSubtitle(req: Request, res: Response) {
           : provider === 'assrt'
             ? `https://assrt.net/xml/sub/${subId.slice(0, -3) || '0'}/${subId}.xml`
             : `https://zmk.pw/detail/${subId}.html`,
-      tags: { provider, lang: [], bilingual: false, fmt: [], source: [], collection: false, imdbMatched: false },
+      tags: { provider, lang: [], bilingual: siteBilingual, fmt: [], source: [], collection: false, imdbMatched: false },
       rate: 0,
       downloadsCount: 0,
       score: 0
@@ -446,7 +450,8 @@ export async function handleDownloadSubtitle(req: Request, res: Response) {
         token: appConfig.assrtToken,
         preferBilingual: langPref === 'bilingual',
         preferTraditional: langPref === 'cht',
-        preferAss: keepOriginal
+        preferAss: keepOriginal,
+        siteBilingual
       });
     } else {
       return res.status(400).send('Unknown subtitle provider');
@@ -480,7 +485,8 @@ export async function handleDownloadSubtitle(req: Request, res: Response) {
         targetEp,
         preferBilingual,
         preferTraditional,
-        preferAss
+        preferAss,
+        Boolean(candidate.tags.bilingual)
       );
       if (!extracted) {
         cacheManager.markDownloadFailed(failKey, 1800);
